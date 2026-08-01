@@ -37,6 +37,17 @@ const stateLabels: Record<AnalysisState, string> = {
   error: 'ต้องแก้ไขข้อมูล',
 }
 
+const analysisSteps = ['ตรวจสอบข้อความ', 'นับ token', 'เตรียมรูบริก', 'ส่งข้อมูลอย่างปลอดภัย', 'AI กำลังวิเคราะห์', 'ตรวจสอบผลลัพธ์', 'คำนวณคะแนน']
+
+function getAnonymousToken() {
+  const key = 'report-checker-anonymous-token'
+  const existing = window.localStorage.getItem(key)
+  if (existing) return existing
+  const token = crypto.randomUUID()
+  window.localStorage.setItem(key, token)
+  return token
+}
+
 function App() {
   const [state, setState] = useState<AnalysisState>('idle')
   const [fileName, setFileName] = useState<string | null>(null)
@@ -44,9 +55,13 @@ function App() {
   const [warnings, setWarnings] = useState<string[]>([])
   const [isExtracting, setIsExtracting] = useState(false)
   const [result, setResult] = useState<AnalysisResult | null>(null)
+  const [progressIndex, setProgressIndex] = useState(0)
+  const [analysisMessage, setAnalysisMessage] = useState<string | null>(null)
   const [templateId, setTemplateId] = useState(DEFAULT_RUBRIC_TEMPLATE_ID)
   const [rubric, setRubric] = useState<RubricSection[]>(() => cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID).sections)
   const timeoutRef = useRef<number | null>(null)
+  const progressTimerRef = useRef<number | null>(null)
+  const analysisAbortRef = useRef<AbortController | null>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const { register, getValues, setValue, watch, formState: { errors }, trigger } = useForm<SourceForm>({
     resolver: zodResolver(sourceSchema),
@@ -56,7 +71,11 @@ function App() {
   const text = watch('reportText')
   const reportTextField = register('reportText')
 
-  useEffect(() => () => { if (timeoutRef.current) window.clearTimeout(timeoutRef.current) }, [])
+  useEffect(() => () => {
+    if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
+    if (progressTimerRef.current) window.clearInterval(progressTimerRef.current)
+    analysisAbortRef.current?.abort()
+  }, [])
 
   const editText = () => {
     setState('editing')
@@ -109,15 +128,53 @@ function App() {
     }
   }
 
-  const startMockAnalysis = () => {
+  const startAnalysis = async () => {
+    if (state === 'analyzing') return
+    const controller = new AbortController()
+    analysisAbortRef.current = controller
     setState('analyzing')
     setResult(null)
-    timeoutRef.current = window.setTimeout(() => {
-      const rubricVersion = rubricTemplates.find((template) => template.id === templateId)?.version ?? 'custom-rubric-v1'
-      setResult(createMockAnalysis(rubric, referenceSummary, rubricVersion))
+    setAnalysisMessage(null)
+    setProgressIndex(0)
+    progressTimerRef.current = window.setInterval(() => setProgressIndex((current) => Math.min(current + 1, analysisSteps.length - 2)), 700)
+    timeoutRef.current = window.setTimeout(() => controller.abort(), 45_000)
+    const rubricVersion = rubricTemplates.find((template) => template.id === templateId)?.version ?? 'custom-rubric-v1'
+    try {
+      if (import.meta.env.VITE_USE_MOCK_ANALYSIS !== 'false') {
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(resolve, 600)
+          controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')) }, { once: true })
+        })
+        setResult(createMockAnalysis(rubric, referenceSummary, rubricVersion))
+      } else {
+        const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api'
+        const response = await fetch(`${baseUrl}/analyze`, {
+          method: 'POST', signal: controller.signal,
+          headers: { 'content-type': 'application/json', 'Idempotency-Key': crypto.randomUUID() },
+          body: JSON.stringify({ reportText: text, anonymousToken: getAnonymousToken(), rubric: { version: rubricVersion, sections: rubric }, referenceSummary: referenceSummary.aiSummary }),
+        })
+        const payload = await response.json() as AnalysisResult & { error?: string }
+        if (!response.ok || payload.error) throw new Error(payload.error ?? 'ไม่สามารถวิเคราะห์รายงานได้')
+        setResult(payload)
+      }
+      setProgressIndex(analysisSteps.length - 1)
       setState('result')
-    }, 750)
+    } catch (error) {
+      if (controller.signal.aborted) {
+        setState('ready')
+        setAnalysisMessage('ยกเลิกการตรวจแล้ว ไม่มีการแสดงผลการวิเคราะห์')
+      } else {
+        setState('error')
+        setAnalysisMessage(error instanceof Error ? error.message : 'เกิดข้อผิดพลาดที่ไม่คาดคิด โปรดลองใหม่อีกครั้ง')
+      }
+    } finally {
+      if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
+      if (progressTimerRef.current) window.clearInterval(progressTimerRef.current)
+      analysisAbortRef.current = null
+    }
   }
+
+  const cancelAnalysis = () => analysisAbortRef.current?.abort()
 
   const currentLength = text.length
   const exceedsLimit = currentLength > MAX_CHARS
@@ -232,10 +289,12 @@ function App() {
 
         {(state === 'preview' || state === 'editing' || state === 'ready') && <Card className="mt-6">
           <CardHeader><CardTitle>2. ตรวจสอบก่อนส่ง</CardTitle><CardDescription>นี่คือตัวอย่างข้อความที่จะใช้วิเคราะห์ โปรดตรวจหรือแก้ไขในกล่องข้อความด้านบน แล้วจึงยืนยัน</CardDescription></CardHeader>
-          <CardContent className="space-y-4"><div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{text}</div><div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>แก้ไขข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startMockAnalysis} disabled={!rubricValidation.success}>เริ่มตรวจด้วย Mock AI</Button>}</div></CardContent>
+          <CardContent className="space-y-4"><div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{text}</div><div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>แก้ไขข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startAnalysis} disabled={!rubricValidation.success}>{import.meta.env.VITE_USE_MOCK_ANALYSIS !== 'false' ? 'เริ่มตรวจด้วย Mock AI' : 'เริ่มตรวจด้วย AI'}</Button>}</div></CardContent>
         </Card>}
 
-        {state === 'analyzing' && <Card className="mt-6"><CardContent className="space-y-3 pt-4"><div className="flex items-center gap-2 text-sm font-medium"><LoaderCircle className="size-4 animate-spin" />กำลังวิเคราะห์ด้วย mock response…</div><Progress value={56} /><p className="text-xs text-slate-500">ยังไม่เรียก Gemini หรือส่งข้อมูลออกจาก browser</p></CardContent></Card>}
+        {state === 'analyzing' && <Card className="mt-6"><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>กรุณาอย่าปิดหน้านี้ระหว่างรอผล</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card>}
+
+        {analysisMessage && <Alert className="mt-6 border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ไม่สามารถวิเคราะห์รายงานได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{state === 'error' && <Button size="sm" variant="outline" onClick={startAnalysis}>ลองอีกครั้ง</Button>}</AlertDescription></Alert>}
 
         {state === 'result' && result && <section className="mt-6 space-y-6" aria-label="ผลวิเคราะห์">
           <Card className="border-emerald-200"><CardHeader><CardTitle>ผลวิเคราะห์เบื้องต้น</CardTitle><CardDescription>Model: {result.model} · Rubric: {result.rubricVersion}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยสูตรตามน้ำหนักของหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><Badge variant="outline">{result.sections.length} หัวข้อที่ใช้คำนวณ</Badge></CardContent></Card>

@@ -37,6 +37,7 @@ npm run worker:check
 - ตรวจ citation และรายการอ้างอิงท้ายเล่มด้วย regex/กฎเบื้องต้น โดยระบุผลว่าให้ผู้ใช้ยืนยันเสมอ
 - Cloudflare Worker มี `POST /api/analyze` แบบ mock พร้อม request validation, idempotency, rate-limit/KV design และคำนวณคะแนนรวมด้วยโค้ด
 - หน้าแสดงผลมีคะแนนรวมและผลรายหัวข้อ พร้อมเหตุผล หลักฐาน สิ่งที่ขาด คำแนะนำ confidence ความสอดคล้อง และคำเตือนอ้างอิง
+- มี progress 7 ขั้น ป้องกันการส่งซ้ำ timeout 45 วินาที ปุ่มยกเลิก และ retry ที่ผู้ใช้ควบคุมได้
 
 ## ข้อจำกัดชั่วคราว
 
