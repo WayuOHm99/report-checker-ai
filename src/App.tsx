@@ -224,7 +224,7 @@ function App() {
                 <Textarea
                   id="report-text"
                   aria-label="ข้อความรายงาน"
-                  className="min-h-72 resize-y leading-6"
+                  className="h-80 resize-none overflow-y-scroll leading-6"
                   placeholder="วางเนื้อหารายงานที่นี่…"
                   {...reportTextField}
                   ref={(element) => { reportTextField.ref(element); editorRef.current = element }}
