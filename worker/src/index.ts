@@ -19,6 +19,7 @@ export type Env = {
   MAX_CHARS?: string
   MOCK_ANALYSIS?: string
   DAILY_BUDGET_LIMIT?: string
+  ALLOWED_ORIGIN?: string
   RATE_LIMIT?: KVStore
 }
 
@@ -49,6 +50,19 @@ const modelResponseSchema = z.object({
 
 const jsonHeaders = { 'content-type': 'application/json; charset=UTF-8', 'cache-control': 'no-store' }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: jsonHeaders })
+
+function withCors(response: Response, request: Request, env: Env) {
+  const origin = request.headers.get('origin')
+  if (!origin || !env.ALLOWED_ORIGIN || origin !== env.ALLOWED_ORIGIN) return response
+
+  const headers = new Headers(response.headers)
+  headers.set('access-control-allow-origin', origin)
+  headers.set('access-control-allow-methods', 'POST, OPTIONS')
+  headers.set('access-control-allow-headers', 'content-type, idempotency-key')
+  headers.set('access-control-max-age', '86400')
+  headers.set('vary', 'Origin')
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
 
 async function readJsonWithinLimit(request: Request) {
   const declaredSize = Number(request.headers.get('content-length'))
@@ -181,8 +195,10 @@ export async function handleAnalyze(request: Request, env: Env) {
 export default {
   async fetch(request: Request, env: Env) {
     const url = new URL(request.url)
-    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { allow: 'POST, OPTIONS' } })
-    if (request.method === 'POST' && url.pathname === '/api/analyze') return handleAnalyze(request, env)
-    return json({ error: 'ไม่พบ endpoint' }, 404)
+    let response: Response
+    if (request.method === 'OPTIONS') response = new Response(null, { status: 204, headers: { allow: 'POST, OPTIONS' } })
+    else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
+    else response = json({ error: 'ไม่พบ endpoint' }, 404)
+    return withCors(response, request, env)
   },
 }

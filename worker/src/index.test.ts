@@ -50,4 +50,12 @@ describe('POST /api/analyze', () => {
     expect(response.status).toBe(200)
     expect((await response.json() as { model: string }).model).toBe('mock-analysis-v1')
   })
+
+  it('allows browser CORS only for the configured Pages origin', async () => {
+    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://report-checker-ai.pages.dev' } satisfies Env
+    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://report-checker-ai.pages.dev' } }), env)
+    const rejected = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example' } }), env)
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://report-checker-ai.pages.dev')
+    expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
+  })
 })

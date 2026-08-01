@@ -11,8 +11,9 @@
   "vars": {
     "GEMINI_MODEL": "gemini-2.5-flash",
     "MAX_CHARS": "200000",
-    "MOCK_ANALYSIS": "true",
-    "DAILY_BUDGET_LIMIT": "100"
+    "MOCK_ANALYSIS": "false",
+    "DAILY_BUDGET_LIMIT": "100",
+    "ALLOWED_ORIGIN": "https://report-checker-ai.pages.dev"
   },
   "kv_namespaces": [
     {
