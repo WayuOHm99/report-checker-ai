@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { ANALYSIS_RESPONSE_JSON_SCHEMA, buildAnalysisContents, SYSTEM_INSTRUCTION } from './prompt'
 
 const MAX_CHARS_DEFAULT = 200_000
+const MAX_REQUEST_BYTES = 1_100_000
 const RATE_LIMIT_PER_HOUR = 5
 const IDEMPOTENCY_TTL_SECONDS = 10 * 60
 
@@ -48,6 +49,30 @@ const modelResponseSchema = z.object({
 
 const jsonHeaders = { 'content-type': 'application/json; charset=UTF-8', 'cache-control': 'no-store' }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: jsonHeaders })
+
+async function readJsonWithinLimit(request: Request) {
+  const declaredSize = Number(request.headers.get('content-length'))
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_REQUEST_BYTES) throw new RangeError('request-too-large')
+  if (!request.body) throw new SyntaxError('missing-body')
+  const reader = request.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_REQUEST_BYTES) throw new RangeError('request-too-large')
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+  return JSON.parse(new TextDecoder().decode(bytes)) as unknown
+}
 
 function maxChars(env: Env) {
   const configured = Number(env.MAX_CHARS)
@@ -97,15 +122,19 @@ async function callGemini(prompt: string, env: Env) {
 }
 
 export async function handleAnalyze(request: Request, env: Env) {
+  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return json({ error: 'Content-Type ต้องเป็น application/json' }, 415)
   const idempotencyKey = request.headers.get('Idempotency-Key')
-  if (!idempotencyKey || idempotencyKey.length > 200) return json({ error: 'กรุณาระบุ Idempotency-Key ที่ถูกต้อง' }, 400)
+  if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 200) return json({ error: 'กรุณาระบุ Idempotency-Key ที่ถูกต้อง' }, 400)
   if (env.RATE_LIMIT) {
     const cached = await env.RATE_LIMIT.get(`idempotency:${idempotencyKey}`)
     if (cached) return new Response(cached, { headers: jsonHeaders })
   }
 
   let rawBody: unknown
-  try { rawBody = await request.json() } catch { return json({ error: 'รูปแบบ request ต้องเป็น JSON' }, 400) }
+  try { rawBody = await readJsonWithinLimit(request) } catch (error) {
+    if (error instanceof RangeError) return json({ error: 'request มีขนาดเกินที่ระบบอนุญาต' }, 413)
+    return json({ error: 'รูปแบบ request ต้องเป็น JSON' }, 400)
+  }
   const parsed = requestSchema.safeParse(rawBody)
   if (!parsed.success) return json({ error: 'ข้อมูลที่ส่งมาไม่ถูกต้อง', details: parsed.error.issues.map((issue) => issue.message) }, 400)
   if (parsed.data.reportText.length > maxChars(env)) return json({ error: 'ข้อความยาวเกินขนาดที่อนุญาต ระบบไม่ได้ตัดข้อความ' }, 413)

@@ -23,6 +23,7 @@ npm run dev
 npm run test
 npm run build
 npm run worker:check
+npm run worker:types
 ```
 
 ## สิ่งที่มีใน Phase 1
@@ -48,3 +49,5 @@ npm run worker:check
 ## ความเป็นส่วนตัวและขอบเขต
 
 ระบบเป็นเครื่องมือช่วยตรวจเบื้องต้น ไม่ใช่ผู้ตัดสินแทนอาจารย์ และไม่อ้างว่าสามารถตรวจลอกเลียนผลงานได้ ระบบจริงจะส่งข้อมูลไปยัง Google Gemini ผ่าน Cloudflare Worker เท่านั้น และสำหรับผู้ใช้ 18 ปีขึ้นไป
+
+ดูมาตรการป้องกัน credential, request validation และการไม่เก็บรายงานใน [SECURITY.md](SECURITY.md)

@@ -19,7 +19,12 @@ describe('POST /api/analyze', () => {
   })
 
   it('rejects a request without an idempotency key', async () => {
-    const response = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'POST', body: JSON.stringify(body) }), { MOCK_ANALYSIS: 'true' } satisfies Env)
+    const response = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }), { MOCK_ANALYSIS: 'true' } satisfies Env)
     expect(response.status).toBe(400)
+  })
+
+  it('rejects a non-JSON request before parsing it', async () => {
+    const response = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'POST', headers: { 'Idempotency-Key': 'test-idempotency-key' }, body: 'not-json' }), { MOCK_ANALYSIS: 'true' } satisfies Env)
+    expect(response.status).toBe(415)
   })
 })
