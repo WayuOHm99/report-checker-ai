@@ -174,10 +174,11 @@ export async function handleAnalyze(request: Request, env: Env) {
       if (Number(await env.RATE_LIMIT.get(dailyKey) ?? '0') >= dailyLimit) return json({ error: 'งบประมาณรายวันของระบบครบแล้ว' }, 429)
       await env.RATE_LIMIT.put(dailyKey, String(Number(await env.RATE_LIMIT.get(dailyKey) ?? '0') + 1), { expirationTtl: 60 * 60 * 36 })
     }
-    let validated: ReturnType<typeof modelResponseSchema.safeParse> | undefined
-    try { validated = modelResponseSchema.safeParse(JSON.parse(await callGemini(prompt, env))) } catch { validated = undefined }
+    let firstOutput: string
+    try { firstOutput = await callGemini(prompt, env) } catch { return json({ error: 'ไม่สามารถเชื่อมต่อ Gemini ได้ในขณะนี้' }, 502) }
+    let validated = modelResponseSchema.safeParse(safelyParseJson(firstOutput))
     if (!validated?.success) {
-      try { validated = modelResponseSchema.safeParse(JSON.parse(await callGemini(`${prompt}\n\nReturn valid JSON only.`, env))) } catch { validated = undefined }
+      try { validated = modelResponseSchema.safeParse(safelyParseJson(await callGemini(`${prompt}\n\nReturn valid JSON only.`, env))) } catch { validated = undefined }
     }
     if (!validated?.success) return json({ error: 'ผลลัพธ์ AI ไม่อยู่ในรูปแบบที่ระบบรองรับ' }, 502)
     modelOutput = validated.data
@@ -190,6 +191,10 @@ export async function handleAnalyze(request: Request, env: Env) {
   const serialized = JSON.stringify(responseBody)
   if (env.RATE_LIMIT) await env.RATE_LIMIT.put(`idempotency:${idempotencyKey}`, serialized, { expirationTtl: IDEMPOTENCY_TTL_SECONDS })
   return new Response(serialized, { headers: jsonHeaders })
+}
+
+function safelyParseJson(value: string) {
+  try { return JSON.parse(value) as unknown } catch { return undefined }
 }
 
 export default {
