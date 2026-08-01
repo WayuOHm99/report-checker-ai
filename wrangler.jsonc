@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "report-checker-ai-api",
+  "main": "worker/src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "vars": {
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    "MAX_CHARS": "200000",
+    "MOCK_ANALYSIS": "true",
+    "DAILY_BUDGET_LIMIT": "100"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "RATE_LIMIT",
+      "id": "REPLACE_WITH_CLOUDFLARE_KV_NAMESPACE_ID",
+      "preview_id": "REPLACE_WITH_CLOUDFLARE_KV_PREVIEW_NAMESPACE_ID"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ npm run dev
 ```bash
 npm run test
 npm run build
+npm run worker:check
 ```
 
 ## สิ่งที่มีใน Phase 1
@@ -34,12 +35,13 @@ npm run build
 - `.env.example` ไม่มี secret จริง
 - รูบริกเริ่มต้นปรับเทมเพลต เกณฑ์ น้ำหนัก และสถานะเปิด/ปิดหัวข้อได้
 - ตรวจ citation และรายการอ้างอิงท้ายเล่มด้วย regex/กฎเบื้องต้น โดยระบุผลว่าให้ผู้ใช้ยืนยันเสมอ
+- Cloudflare Worker มี `POST /api/analyze` แบบ mock พร้อม request validation, idempotency, rate-limit/KV design และคำนวณคะแนนรวมด้วยโค้ด
 
 ## ข้อจำกัดชั่วคราว
 
 - PDF.js ดึง text layer จาก PDF และเปิดให้ตรวจ/แก้ไขข้อความก่อนยืนยัน; PDF สแกนที่ไม่มี text layer จะแจ้งเตือน โดย MVP จะไม่ทำ OCR
 - mock response อยู่ใน `src/App.tsx`; จะย้ายไปเรียก `POST /api/analyze` ผ่าน Cloudflare Worker ใน Phase 5
-- ยังไม่มี Worker, KV, Gemini credential หรือการ deploy และไม่มี Netlify ในโปรเจกต์
+- Worker ยังทำงานแบบ mock เพราะไม่มี Gemini credential และ KV namespace จริง; ห้าม deploy จนกว่าจะแทนที่ KV placeholder และตั้ง Worker Secret `GEMINI_API_KEY`
 
 ## ความเป็นส่วนตัวและขอบเขต
 
