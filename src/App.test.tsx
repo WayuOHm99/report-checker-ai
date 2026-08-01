@@ -14,17 +14,19 @@ describe('App', () => {
     vi.unstubAllEnvs()
   })
 
-  it('does not allow an empty report to move to preview', () => {
+  it('does not allow an empty report to be analyzed', () => {
     render(<App />)
-    expect(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'ตรวจรายงาน' })).toBeDisabled()
   })
 
-  it('moves from text input to preview after validation', async () => {
+  it('uses one primary action without an age gate or privacy card', async () => {
     const user = userEvent.setup()
     render(<App />)
     await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nโครงงานนี้จัดทำขึ้นเพื่อทดสอบระบบ')
-    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
-    expect(await screen.findByRole('button', { name: 'ยืนยันเนื้อหา' })).toBeInTheDocument()
+    expect(screen.queryByText('ความเป็นส่วนตัว')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
   })
 
   it('extracts a selected PDF into preview text', async () => {
@@ -37,7 +39,7 @@ describe('App', () => {
     render(<App />)
     await user.upload(screen.getByLabelText(/อัปโหลด PDF/), new File(['pdf'], 'report.pdf', { type: 'application/pdf' }))
     expect(await screen.findByText(/อ่าน PDF ครบ 1 หน้าแล้ว/)).toBeInTheDocument()
-    expect(screen.getByText('บทนำ โครงงานทดสอบ PDF')).toBeInTheDocument()
+    expect(screen.getByLabelText('ข้อความรายงาน')).toHaveValue('บทนำ โครงงานทดสอบ PDF')
   })
 
   it('warns when a PDF has no text layer and does not offer OCR', async () => {
@@ -52,18 +54,18 @@ describe('App', () => {
     render(<App />)
     fireEvent.change(screen.getByLabelText('ข้อความรายงาน'), { target: { value: 'ก'.repeat(200_001) } })
     expect(screen.getByText(/ระบบยังไม่ได้ตัดข้อความหรือส่งข้อมูลส่วนใด/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'ตรวจรายงาน' })).toBeDisabled()
   })
 
-  it('requires separate confirmation before excluding an appendix', async () => {
+  it('asks before excluding an appendix and does not send when cancelled', async () => {
     const user = userEvent.setup()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<App />)
     await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาหลัก\n\nภาคผนวก ก\nข้อมูลดิบ')
-    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
-    await user.click(screen.getByRole('checkbox', { name: /ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป/ }))
-    expect(screen.getByRole('button', { name: 'ยืนยันเนื้อหา' })).toBeDisabled()
-    await user.click(screen.getByRole('checkbox', { name: /ฉันตรวจแล้วและยืนยันว่าไม่นำส่วน/ }))
-    expect(screen.getByRole('button', { name: 'ยืนยันเนื้อหา' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/ระบบจะไม่นำส่วนนี้ไปวิเคราะห์/))
+    expect(screen.queryByRole('region', { name: 'ผลวิเคราะห์' })).not.toBeInTheDocument()
+    expect(screen.getByText(/ยังไม่ได้ส่งรายงาน/)).toBeInTheDocument()
   })
 
   it('restores a draft only from the current browser session', () => {
@@ -103,14 +105,11 @@ describe('App', () => {
     expect(screen.getByText(/น้ำหนักต้องไม่ติดลบ/)).toBeInTheDocument()
   })
 
-  it('shows detailed mock results only after content confirmation', async () => {
+  it('shows detailed mock results after one click', async () => {
     const user = userEvent.setup()
     render(<App />)
     await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาสำหรับตรวจ')
-    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
-    await user.click(await screen.findByRole('checkbox', { name: /ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป/ }))
-    await user.click(await screen.findByRole('button', { name: 'ยืนยันเนื้อหา' }))
-    await user.click(screen.getByRole('button', { name: /เริ่มตรวจด้วย\s*ข้อมูลตัวอย่าง/ }))
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
     expect(screen.getByText(/ตรวจขนาดเอกสาร/)).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
     expect(screen.getByText('ความสอดคล้องระหว่างบท')).toBeInTheDocument()
@@ -121,10 +120,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
     await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาสำหรับทดสอบ timeout โดยไม่ส่งข้อมูลไปยัง Gemini จริง')
-    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
-    await user.click(await screen.findByRole('checkbox', { name: /ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป/ }))
-    await user.click(screen.getByRole('button', { name: 'ยืนยันเนื้อหา' }))
-    await user.click(screen.getByRole('button', { name: /เริ่มตรวจด้วย\s*ข้อมูลตัวอย่าง/ }))
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
     expect(await screen.findByText(/การตรวจใช้เวลานานเกิน 2 นาที/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'ลองอีกครั้งด้วยคำขอเดิม' })).toBeInTheDocument()
   })

@@ -94,7 +94,6 @@ function App() {
   const [showAdvancedRubric, setShowAdvancedRubric] = useState(false)
   const [showReferenceDetails, setShowReferenceDetails] = useState(false)
   const [appendixConfirmed, setAppendixConfirmed] = useState(false)
-  const [privacyAccepted, setPrivacyAccepted] = useState(false)
   const timeoutRef = useRef<number | null>(null)
   const progressTimerRef = useRef<number | null>(null)
   const analysisAbortRef = useRef<AbortController | null>(null)
@@ -103,7 +102,6 @@ function App() {
   const idempotencyKeyRef = useRef<string | null>(null)
   const pdfAbortRef = useRef<AbortController | null>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
-  const previewRef = useRef<HTMLDivElement | null>(null)
   const resultRef = useRef<HTMLElement | null>(null)
   const { register, reset, setValue, watch, formState: { errors }, trigger } = useForm<SourceForm>({
     resolver: zodResolver(sourceSchema), defaultValues: { reportText: initialDraft.reportText }, mode: 'onChange',
@@ -117,7 +115,7 @@ function App() {
   const exceedsRawLimit = text.length > MAX_RAW_CHARS
   const exceedsAnalysisLimit = preparedDocument.mainText.length > MAX_ANALYSIS_CHARS
   const isTooShort = preparedDocument.mainText.trim().length > 0 && preparedDocument.mainText.trim().length < 100
-  const canPreview = Boolean(preparedDocument.mainText.trim()) && !exceedsRawLimit && !exceedsAnalysisLimit && !isExtracting && state !== 'analyzing'
+  const canAnalyze = Boolean(preparedDocument.mainText.trim()) && !exceedsRawLimit && !exceedsAnalysisLimit && !isExtracting && state !== 'analyzing' && rubricValidation.success
 
   useEffect(() => () => {
     if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
@@ -145,14 +143,6 @@ function App() {
   }, [state, text])
 
   useEffect(() => {
-    if (state !== 'preview') return
-    window.requestAnimationFrame(() => {
-      previewRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-      previewRef.current?.focus({ preventScroll: true })
-    })
-  }, [state])
-
-  useEffect(() => {
     if (state !== 'result') return
     window.requestAnimationFrame(() => {
       resultRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
@@ -165,7 +155,6 @@ function App() {
     setResult(null)
     setAnalysisMessage(null)
     setAppendixConfirmed(false)
-    setPrivacyAccepted(false)
     idempotencyKeyRef.current = null
   }
 
@@ -175,25 +164,6 @@ function App() {
     setAnalysisMessage(null)
     idempotencyKeyRef.current = null
     if (state === 'result') setState('ready')
-  }
-
-  const editText = () => {
-    setState('editing')
-    window.requestAnimationFrame(() => {
-      editorRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-      editorRef.current?.focus({ preventScroll: true })
-    })
-  }
-
-  const proceedToPreview = async () => {
-    const valid = await trigger('reportText')
-    if (!valid || !preparedDocument.mainText.trim() || exceedsAnalysisLimit) {
-      setState('error')
-      setAnalysisMessage(!preparedDocument.mainText.trim() ? 'กรุณาเพิ่มเนื้อหารายงานหลักก่อนดูตัวอย่าง' : 'เนื้อหารายงานหลักยังยาวเกินขนาดที่รองรับ')
-      return
-    }
-    setAnalysisMessage(null)
-    setState('preview')
   }
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -234,10 +204,9 @@ function App() {
       })
       setValue('reportText', extraction.text, { shouldDirty: true, shouldValidate: true })
       setWarnings(extraction.warnings)
-      setFileNotice(`อ่าน PDF ครบ ${extraction.pageCount} หน้าแล้ว โปรดตรวจข้อความก่อนยืนยัน`)
+      setFileNotice(`อ่าน PDF ครบ ${extraction.pageCount} หน้าแล้ว ตรวจแก้ข้อความในกล่องด้านบนได้ก่อนกดตรวจรายงาน`)
       setAppendixConfirmed(false)
-      setPrivacyAccepted(false)
-      setState(extraction.text.trim() && extraction.text.length <= MAX_RAW_CHARS ? 'preview' : 'error')
+      setState(extraction.text.trim() && extraction.text.length <= MAX_RAW_CHARS ? 'input' : 'error')
     } catch (error) {
       if (controller.signal.aborted) {
         setFileNotice('ยกเลิกการอ่าน PDF แล้ว ข้อความเดิมยังไม่ถูกส่งไปที่ AI')
@@ -256,14 +225,38 @@ function App() {
 
   const startAnalysis = async () => {
     if (analysisInFlightRef.current || state === 'analyzing') return
-    if (!privacyAccepted || (preparedDocument.appendixHeading && !appendixConfirmed) || !rubricValidation.success) {
+    analysisInFlightRef.current = true
+
+    const valid = await trigger('reportText')
+    if (!valid || !preparedDocument.mainText.trim() || exceedsAnalysisLimit || exceedsRawLimit) {
       setState('error')
-      setAnalysisMessage('กรุณายืนยันเนื้อหา ภาคผนวก และความเป็นส่วนตัวให้ครบก่อนเริ่มตรวจ')
+      setAnalysisMessage(!preparedDocument.mainText.trim() ? 'กรุณาเพิ่มเนื้อหารายงานหลักก่อนเริ่มตรวจ' : 'เนื้อหารายงานยังยาวเกินขนาดที่รองรับ ระบบยังไม่ได้ตัดหรือส่งข้อความส่วนใด')
       setAnalysisCanRetry(false)
+      analysisInFlightRef.current = false
       return
     }
 
-    analysisInFlightRef.current = true
+    if (!rubricValidation.success) {
+      setState('error')
+      setAnalysisMessage('เกณฑ์การตรวจยังไม่พร้อม โปรดแก้ไขหัวข้อหรือน้ำหนักก่อนเริ่มตรวจ')
+      setAnalysisCanRetry(false)
+      analysisInFlightRef.current = false
+      return
+    }
+
+    let excludeAppendix = appendixConfirmed
+    if (preparedDocument.appendixHeading && !excludeAppendix) {
+      excludeAppendix = window.confirm(`พบส่วน “${preparedDocument.appendixHeading}” จำนวน ${preparedDocument.excludedCharCount.toLocaleString()} ตัวอักษร ระบบจะไม่นำส่วนนี้ไปวิเคราะห์ แต่ข้อความต้นฉบับยังอยู่ครบ\n\nกด “ตกลง” เพื่อยืนยันและส่งตรวจ หรือ “ยกเลิก” เพื่อกลับไปแก้ข้อความ`)
+      if (!excludeAppendix) {
+        setState('input')
+        setAnalysisMessage('ยังไม่ได้ส่งรายงาน คุณสามารถแก้ข้อความหรือกดตรวจอีกครั้งได้')
+        setAnalysisCanRetry(false)
+        analysisInFlightRef.current = false
+        return
+      }
+      setAppendixConfirmed(true)
+    }
+
     const controller = new AbortController()
     analysisAbortRef.current = controller
     abortReasonRef.current = null
@@ -296,7 +289,7 @@ function App() {
             anonymousToken: getAnonymousToken(),
             rubric: { version: rubricVersion, sections: rubric },
             referenceSummary: referenceSummary.aiSummary,
-            documentOptions: { excludeAppendix: Boolean(preparedDocument.appendixHeading && appendixConfirmed) },
+            documentOptions: { excludeAppendix: Boolean(preparedDocument.appendixHeading && excludeAppendix) },
           }),
         })
         const rawPayload = await response.text()
@@ -372,7 +365,6 @@ function App() {
     setFileNotice(null)
     setWarnings([])
     setAppendixConfirmed(false)
-    setPrivacyAccepted(false)
     setAnalysisMessage(null)
     idempotencyKeyRef.current = null
     window.sessionStorage.removeItem(DRAFT_KEY)
@@ -386,7 +378,7 @@ function App() {
           <div>
             <div className="mb-3 flex items-center gap-2 text-sm font-medium text-indigo-700"><ShieldCheck className="size-4" /> ผู้ช่วยตรวจรายงานด้วย AI</div>
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">ตรวจรายงานก่อนส่งอาจารย์</h1>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">วางข้อความหรือเลือก PDF แล้วตรวจทีละขั้น ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="w-fit" aria-live="polite">สถานะ: {stateLabels[state]}</Badge>
@@ -400,7 +392,7 @@ function App() {
           <AlertDescription>AI อาจคลาดเคลื่อน ผลไม่ใช่คำตัดสินแทนอาจารย์ และระบบนี้ไม่ตรวจหรือรับรองการลอกเลียนผลงาน</AlertDescription>
         </Alert>
 
-        <div className="grid gap-6 lg:grid-cols-[1.25fr_.75fr]">
+        <div>
           <Card>
             <CardHeader><CardTitle>ขั้นที่ 1 — เพิ่มรายงาน</CardTitle><CardDescription>รองรับเนื้อหารายงานหลักไม่เกิน 200,000 ตัวอักษร และ PDF ไม่เกิน 10 MB</CardDescription></CardHeader>
             <CardContent className="space-y-4">
@@ -414,13 +406,13 @@ function App() {
                   disabled={state === 'analyzing' || isExtracting}
                 />
                 <div className="flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:justify-between sm:gap-4">
-                  <span>{errors.reportText?.message ?? 'ร่างถูกเก็บเฉพาะในแท็บนี้ และจะยังไม่ส่งจนกว่าคุณจะยืนยัน'}</span>
+                  <span>{errors.reportText?.message ?? 'ร่างถูกเก็บเฉพาะในแท็บนี้ และจะส่งเมื่อคุณกด “ตรวจรายงาน”'}</span>
                   <span className={exceedsRawLimit || exceedsAnalysisLimit ? 'font-medium text-red-700' : ''}>{text.length.toLocaleString()} ตัวอักษรทั้งหมด · {preparedDocument.mainText.length.toLocaleString()} ตัวอักษรที่จะวิเคราะห์</span>
                 </div>
               </div>
 
               {(exceedsRawLimit || exceedsAnalysisLimit) && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>เอกสารยังยาวเกินขนาดที่รองรับ</AlertTitle><AlertDescription>ระบบยังไม่ได้ตัดข้อความหรือส่งข้อมูลส่วนใด เนื้อหารายงานหลักต้องไม่เกิน {MAX_ANALYSIS_CHARS.toLocaleString()} ตัวอักษร และข้อความทั้งหมดรวมภาคผนวกต้องไม่เกิน {MAX_RAW_CHARS.toLocaleString()} ตัวอักษร</AlertDescription></Alert>}
-              {isTooShort && <Alert className="border-sky-200 bg-sky-50 text-sky-950"><AlertCircle className="size-4" /><AlertTitle>รายงานค่อนข้างสั้น</AlertTitle><AlertDescription>ยังดูตัวอย่างได้ แต่ผล AI อาจไม่ครบถ้วน ควรใส่เนื้อหาหลักมากกว่า 100 ตัวอักษร</AlertDescription></Alert>}
+              {isTooShort && <Alert className="border-sky-200 bg-sky-50 text-sky-950"><AlertCircle className="size-4" /><AlertTitle>รายงานค่อนข้างสั้น</AlertTitle><AlertDescription>ยังส่งตรวจได้ แต่ผล AI อาจไม่ครบถ้วน ควรใส่เนื้อหาหลักมากกว่า 100 ตัวอักษร</AlertDescription></Alert>}
 
               <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
                 <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md text-sm font-medium focus-within:ring-2 focus-within:ring-indigo-500" htmlFor="pdf-upload"><Upload className="size-5 text-indigo-600" /> อัปโหลด PDF <span className="font-normal text-slate-500">(ไม่เกิน 10 MB)</span></label>
@@ -430,27 +422,18 @@ function App() {
                 {fileNotice && <p className="mt-2 text-sm leading-6 text-slate-600" aria-live="polite">{fileNotice}</p>}
               </div>
               {warnings.map((warning) => <Alert key={warning} className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>โปรดตรวจข้อความจาก PDF</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>)}
-              <div>
-                <Button className="w-full sm:w-auto" onClick={proceedToPreview} disabled={!canPreview}>ตรวจสอบและดูตัวอย่าง</Button>
-                {!text.trim() && <p className="mt-2 text-sm text-slate-500">วางข้อความหรือเลือก PDF ก่อน ปุ่มนี้จึงจะกดได้</p>}
+              <div className="space-y-2">
+                <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={startAnalysis} disabled={!canAnalyze}><CheckCircle2 />ตรวจรายงาน</Button>
+                {!text.trim() && <p className="text-sm text-slate-500">วางข้อความหรือเลือก PDF ก่อน ปุ่มนี้จึงจะกดได้</p>}
+                {text.trim() && !rubricValidation.success && <p className="text-sm text-red-700">โปรดแก้เกณฑ์การตรวจให้ถูกต้องก่อนส่ง</p>}
+                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
               </div>
-            </CardContent>
-          </Card>
-
-          <Card className="h-fit">
-            <CardHeader><CardTitle>ความเป็นส่วนตัว</CardTitle><CardDescription>ข้อมูลที่ควรรู้ก่อนเริ่มตรวจ</CardDescription></CardHeader>
-            <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
-              <p>เมื่อคุณกดยืนยัน เนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker โดย API key ไม่อยู่ใน browser</p>
-              <p>ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวรและไม่บันทึกเนื้อหารายงานใน log ผลสำเร็จอาจถูกเก็บใน KV ไม่เกิน 10 นาทีเพื่อป้องกันคำขอซ้ำ</p>
-              <p>ร่างในหน้านี้เก็บเฉพาะ session ของแท็บบนอุปกรณ์ของคุณ คุณล้างได้ด้วยปุ่ม “เริ่มใหม่”</p>
-              <p className="font-medium text-slate-800">MVP นี้สำหรับผู้ใช้อายุ 18 ปีขึ้นไป หากอายุต่ำกว่า 18 ปีอย่าส่งข้อมูลเข้าสู่ระบบ</p>
-              <a className="inline-flex min-h-11 items-center text-indigo-700 underline underline-offset-4" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">อ่านนโยบายความเป็นส่วนตัวของ Google</a>
             </CardContent>
           </Card>
         </div>
 
         <Card className="mt-6">
-          <CardHeader><CardTitle>ขั้นที่ 2 — เลือกเกณฑ์การตรวจ</CardTitle><CardDescription>ใช้ค่าเริ่มต้นได้ทันที หรือเปิดการตั้งค่าขั้นสูงเมื่อต้องการแก้น้ำหนักและหัวข้อ</CardDescription></CardHeader>
+          <CardHeader><CardTitle>ตั้งค่าเพิ่มเติม — เกณฑ์การตรวจ</CardTitle><CardDescription>ไม่จำเป็นต้องแก้ ใช้ค่าเริ่มต้นแล้วกดตรวจได้ทันที หรือปรับหัวข้อและน้ำหนักเมื่อต้องการ</CardDescription></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,24rem)_auto] sm:items-end">
               <label className="flex flex-col gap-2 text-sm font-medium" htmlFor="rubric-template">รูปแบบรายงาน<select id="rubric-template" className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-base" value={templateId} onChange={(event) => selectTemplate(event.target.value)}>{rubricTemplates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
@@ -471,17 +454,6 @@ function App() {
             {!rubricValidation.success && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>เกณฑ์ยังไม่พร้อม</AlertTitle><AlertDescription>{rubricValidation.error.issues.map((issue) => issue.message).join(' · ')}</AlertDescription></Alert>}
           </CardContent>
         </Card>
-
-        {(state === 'preview' || state === 'editing' || state === 'ready') && <Card ref={previewRef} tabIndex={-1} className="mt-6 scroll-mt-4 outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-indigo-500">
-          <CardHeader><CardTitle>ขั้นที่ 3 — ตรวจและยืนยันก่อนส่ง</CardTitle><CardDescription>เฉพาะข้อความในกรอบด้านล่างจะถูกนำไปวิเคราะห์</CardDescription></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{preparedDocument.mainText}</div>
-            {preparedDocument.appendixHeading && <Alert className="border-sky-200 bg-sky-50 text-sky-950"><AlertCircle className="size-4" /><AlertTitle>พบส่วน “{preparedDocument.appendixHeading}”</AlertTitle><AlertDescription>ระบบจะไม่นำภาคผนวกจำนวน {preparedDocument.excludedCharCount.toLocaleString()} ตัวอักษรไปวิเคราะห์ เนื้อหาต้นฉบับในกล่องด้านบนยังอยู่ครบ</AlertDescription></Alert>}
-            <label className="flex min-h-11 items-start gap-3 rounded-lg border p-3 text-sm leading-6"><input className="mt-1 size-5 shrink-0 accent-indigo-600" type="checkbox" checked={privacyAccepted} onChange={(event) => setPrivacyAccepted(event.target.checked)} /><span>ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป เข้าใจว่าเนื้อหาหลักจะถูกส่งให้ Google Gemini และผล AI อาจคลาดเคลื่อน</span></label>
-            {preparedDocument.appendixHeading && <label className="flex min-h-11 items-start gap-3 rounded-lg border p-3 text-sm leading-6"><input className="mt-1 size-5 shrink-0 accent-indigo-600" type="checkbox" checked={appendixConfirmed} onChange={(event) => setAppendixConfirmed(event.target.checked)} /><span>ฉันตรวจแล้วและยืนยันว่าไม่นำส่วน “{preparedDocument.appendixHeading}” ไปวิเคราะห์</span></label>}
-            <div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>กลับไปแก้ข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')} disabled={!privacyAccepted || Boolean(preparedDocument.appendixHeading && !appendixConfirmed)}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startAnalysis} disabled={!rubricValidation.success}>เริ่มตรวจด้วย {usesMockAnalysis() ? 'ข้อมูลตัวอย่าง' : 'AI'}</Button>}</div>
-          </CardContent>
-        </Card>}
 
         {state === 'analyzing' && <Card className="mt-6" aria-live="polite"><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card>}
 
