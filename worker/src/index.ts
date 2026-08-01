@@ -129,7 +129,7 @@ async function callGemini(prompt: string, env: Env) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured')
   const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
   const model = env.GEMINI_MODEL ?? 'gemini-2.5-flash'
-  const tokenCount = await ai.models.countTokens({ model, contents: prompt, config: { systemInstruction: SYSTEM_INSTRUCTION } })
+  const tokenCount = await ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${prompt}` })
   if ((tokenCount.totalTokens ?? 0) > 120_000) throw new Error('Document exceeds the configured Gemini token limit')
   const response = await ai.models.generateContent({ model, contents: prompt, config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
   return response.text ?? ''
