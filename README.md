@@ -66,7 +66,7 @@ npx wrangler secret put GEMINI_API_KEY
 - Worker: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
 - Model config: `gemini-3.6-flash`
 
-โค้ดรอบนี้ยังไม่ deploy การเปลี่ยน Worker ต้องรัน `npm run worker:types` หลังแก้ binding/config และต้องได้รับการยืนยันก่อน deploy production
+Production ใช้ Cloudflare Pages และ Worker จริง โดย production build จะชี้ Worker สาธารณะอัตโนมัติ ส่วน local development จะใช้ mock เป็นค่าเริ่มต้น การเปลี่ยน Worker ต้องรัน `npm run worker:types` หลังแก้ binding/config และต้องได้รับการยืนยันก่อน deploy production
 
 ## ความเป็นส่วนตัวและความปลอดภัย
 

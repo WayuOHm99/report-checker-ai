@@ -19,6 +19,16 @@ import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, rubricSchema, rubricSe
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const DRAFT_KEY = 'report-checker-session-draft-v1'
+const PRODUCTION_API_BASE_URL = 'https://report-checker-ai-api.oomzazato01.workers.dev/api'
+
+function usesMockAnalysis() {
+  const configured = import.meta.env.VITE_USE_MOCK_ANALYSIS
+  return configured ? configured !== 'false' : import.meta.env.DEV
+}
+
+function getApiBaseUrl() {
+  return import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? PRODUCTION_API_BASE_URL : '/api')
+}
 
 function getAnalysisTimeoutMs() {
   const configured = Number(import.meta.env.VITE_ANALYSIS_TIMEOUT_MS)
@@ -269,14 +279,14 @@ function App() {
     }, getAnalysisTimeoutMs())
     const rubricVersion = rubricTemplates.find((template) => template.id === templateId)?.version ?? 'custom-rubric-v1'
     try {
-      if (import.meta.env.VITE_USE_MOCK_ANALYSIS !== 'false') {
+      if (usesMockAnalysis()) {
         await new Promise<void>((resolve, reject) => {
           const timer = window.setTimeout(resolve, 600)
           controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')) }, { once: true })
         })
         setResult(createMockAnalysis(rubric, referenceSummary, rubricVersion))
       } else {
-        const baseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api'
+        const baseUrl = getApiBaseUrl()
         idempotencyKeyRef.current ??= crypto.randomUUID()
         const response = await fetch(`${baseUrl}/analyze`, {
           method: 'POST', signal: controller.signal,
@@ -469,7 +479,7 @@ function App() {
             {preparedDocument.appendixHeading && <Alert className="border-sky-200 bg-sky-50 text-sky-950"><AlertCircle className="size-4" /><AlertTitle>พบส่วน “{preparedDocument.appendixHeading}”</AlertTitle><AlertDescription>ระบบจะไม่นำภาคผนวกจำนวน {preparedDocument.excludedCharCount.toLocaleString()} ตัวอักษรไปวิเคราะห์ เนื้อหาต้นฉบับในกล่องด้านบนยังอยู่ครบ</AlertDescription></Alert>}
             <label className="flex min-h-11 items-start gap-3 rounded-lg border p-3 text-sm leading-6"><input className="mt-1 size-5 shrink-0 accent-indigo-600" type="checkbox" checked={privacyAccepted} onChange={(event) => setPrivacyAccepted(event.target.checked)} /><span>ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป เข้าใจว่าเนื้อหาหลักจะถูกส่งให้ Google Gemini และผล AI อาจคลาดเคลื่อน</span></label>
             {preparedDocument.appendixHeading && <label className="flex min-h-11 items-start gap-3 rounded-lg border p-3 text-sm leading-6"><input className="mt-1 size-5 shrink-0 accent-indigo-600" type="checkbox" checked={appendixConfirmed} onChange={(event) => setAppendixConfirmed(event.target.checked)} /><span>ฉันตรวจแล้วและยืนยันว่าไม่นำส่วน “{preparedDocument.appendixHeading}” ไปวิเคราะห์</span></label>}
-            <div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>กลับไปแก้ข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')} disabled={!privacyAccepted || Boolean(preparedDocument.appendixHeading && !appendixConfirmed)}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startAnalysis} disabled={!rubricValidation.success}>เริ่มตรวจด้วย {import.meta.env.VITE_USE_MOCK_ANALYSIS !== 'false' ? 'ข้อมูลตัวอย่าง' : 'AI'}</Button>}</div>
+            <div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>กลับไปแก้ข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')} disabled={!privacyAccepted || Boolean(preparedDocument.appendixHeading && !appendixConfirmed)}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startAnalysis} disabled={!rubricValidation.success}>เริ่มตรวจด้วย {usesMockAnalysis() ? 'ข้อมูลตัวอย่าง' : 'AI'}</Button>}</div>
           </CardContent>
         </Card>}
 
