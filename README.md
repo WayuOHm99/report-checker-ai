@@ -57,3 +57,12 @@ npm run test:e2e
 ระบบเป็นเครื่องมือช่วยตรวจเบื้องต้น ไม่ใช่ผู้ตัดสินแทนอาจารย์ และไม่อ้างว่าสามารถตรวจลอกเลียนผลงานได้ ระบบจริงจะส่งข้อมูลไปยัง Google Gemini ผ่าน Cloudflare Worker เท่านั้น และสำหรับผู้ใช้ 18 ปีขึ้นไป
 
 ดูมาตรการป้องกัน credential, request validation และการไม่เก็บรายงานใน [SECURITY.md](SECURITY.md)
+
+## Production deployment
+
+- Pages: https://report-checker-ai.pages.dev
+- Worker API: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
+- The deployed frontend uses real analysis (`VITE_USE_MOCK_ANALYSIS=false`) and calls the Worker only. The Gemini key remains a Cloudflare Worker Secret.
+- The Worker is configured for Gemini `gemini-2.5-flash`, Cloudflare KV rate limiting, a daily request budget, and CORS restricted to the Pages origin.
+
+For local UI development, keep `.env` based on `.env.example` with `VITE_USE_MOCK_ANALYSIS=true`; never place a Gemini key in a `VITE_*` variable. Deployment configuration is applied in the Cloudflare dashboard/Wrangler, not committed to this repository.
