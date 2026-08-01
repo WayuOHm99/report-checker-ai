@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlertCircle, CheckCircle2, FileText, LoaderCircle, ShieldCheck, Upload } from 'lucide-react'
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
@@ -13,6 +13,7 @@ import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { extractPdfText } from './lib/pdf'
 import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, rubricSchema, rubricTemplates, type RubricSection } from './lib/rubric'
+import { analyzeReferences } from './lib/references'
 
 const MAX_CHARS = 200_000
 const MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -129,6 +130,7 @@ function App() {
 
   const currentLength = text.length
   const exceedsLimit = currentLength > MAX_CHARS
+  const referenceSummary = useMemo(() => analyzeReferences(text), [text])
   const rubricValidation = rubricSchema.safeParse({ version: 'rubric-editor-v1', sections: rubric })
   const enabledWeight = rubric.filter((section) => section.enabled).reduce((total, section) => total + section.weight, 0)
 
@@ -224,6 +226,16 @@ function App() {
             </div>
             {!rubricValidation.success && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>รูบริกยังไม่พร้อมใช้งาน</AlertTitle><AlertDescription>{rubricValidation.error.issues.map((issue) => issue.message).join(' · ')}</AlertDescription></Alert>}
             <Button type="button" variant="outline" onClick={addSection}>เพิ่มหัวข้อ</Button>
+          </CardContent>
+        </Card>
+
+        <Card className="mt-6">
+          <CardHeader><CardTitle>ตรวจเอกสารอ้างอิงเบื้องต้น</CardTitle><CardDescription>ระบบใช้ regex และกฎพื้นฐานเพื่อตรวจรูปแบบเท่านั้น ไม่ได้ยืนยันความถูกต้องหรือการมีอยู่จริงของแหล่งอ้างอิง</CardDescription></CardHeader>
+          <CardContent className="space-y-4">
+            <Alert className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>ตรวจพบเบื้องต้น โปรดยืนยัน</AlertTitle><AlertDescription>ผลนี้จะถูกสรุปเป็นตัวเลขและสถานะเพื่อส่งให้ AI ในอนาคต แทนการให้ AI นับ citation หรือรายการท้ายเล่มเอง</AlertDescription></Alert>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><div className="rounded-lg border p-3 text-sm"><p className="text-slate-500">หัวข้อท้ายเล่ม</p><p className="mt-1 font-medium">{referenceSummary.bibliographyHeading ?? 'ไม่พบ'}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-slate-500">รายการท้ายเล่ม</p><p className="mt-1 text-lg font-semibold">{referenceSummary.bibliographyEntryCount}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-slate-500">citation แบบตัวเลข</p><p className="mt-1 text-lg font-semibold">{referenceSummary.numericCitationIds.length}</p></div><div className="rounded-lg border p-3 text-sm"><p className="text-slate-500">citation ผู้แต่ง-ปี</p><p className="mt-1 text-lg font-semibold">{referenceSummary.authorYearCitationCount}</p></div></div>
+            {referenceSummary.warnings.length > 0 ? <ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">{referenceSummary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : <p className="text-sm text-emerald-700">ไม่พบข้อสังเกตจากกฎเบื้องต้น โปรดยืนยันรูปแบบกับเกณฑ์รายวิชาอีกครั้ง</p>}
+            {referenceSummary.potentiallyUncitedEntries.length > 0 && <div className="rounded-lg border bg-slate-50 p-3"><p className="text-sm font-medium">รายการที่อาจยังไม่ถูกอ้างในเนื้อหา</p><ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-slate-600">{referenceSummary.potentiallyUncitedEntries.slice(0, 5).map((entry) => <li key={entry}>{entry}</li>)}</ul>{referenceSummary.potentiallyUncitedEntries.length > 5 && <p className="mt-2 text-xs text-slate-500">แสดง 5 จาก {referenceSummary.potentiallyUncitedEntries.length} รายการ</p>}</div>}
           </CardContent>
         </Card>
 
