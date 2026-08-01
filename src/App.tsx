@@ -377,7 +377,7 @@ function App() {
         <header className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="mb-3 flex items-center gap-2 text-sm font-medium text-indigo-700"><ShieldCheck className="size-4" /> ผู้ช่วยตรวจรายงานด้วย AI</div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">ตรวจรายงานก่อนส่งอาจารย์</h1>
+            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">reportcheck</h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
