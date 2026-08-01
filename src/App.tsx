@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { extractPdfText } from './lib/pdf'
+import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, rubricSchema, rubricTemplates, type RubricSection } from './lib/rubric'
 
 const MAX_CHARS = 200_000
 const MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -52,6 +53,8 @@ function App() {
   const [warnings, setWarnings] = useState<string[]>([])
   const [isExtracting, setIsExtracting] = useState(false)
   const [result, setResult] = useState<typeof mockAnalysis | null>(null)
+  const [templateId, setTemplateId] = useState(DEFAULT_RUBRIC_TEMPLATE_ID)
+  const [rubric, setRubric] = useState<RubricSection[]>(() => cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID).sections)
   const timeoutRef = useRef<number | null>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const { register, getValues, setValue, watch, formState: { errors }, trigger } = useForm<SourceForm>({
@@ -126,6 +129,23 @@ function App() {
 
   const currentLength = text.length
   const exceedsLimit = currentLength > MAX_CHARS
+  const rubricValidation = rubricSchema.safeParse({ version: 'rubric-editor-v1', sections: rubric })
+  const enabledWeight = rubric.filter((section) => section.enabled).reduce((total, section) => total + section.weight, 0)
+
+  const selectTemplate = (nextTemplateId: string) => {
+    const template = cloneRubricTemplate(nextTemplateId)
+    setTemplateId(template.id)
+    setRubric(template.sections)
+  }
+
+  const updateSection = (id: string, changes: Partial<RubricSection>) => {
+    setRubric((sections) => sections.map((section) => section.id === id ? { ...section, ...changes } : section))
+  }
+
+  const addSection = () => {
+    const id = `custom-${crypto.randomUUID()}`
+    setRubric((sections) => [...sections, { id, title: 'หัวข้อใหม่', criteria: 'อธิบายเกณฑ์ที่ต้องการตรวจ', weight: 1, enabled: true }])
+  }
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -186,6 +206,26 @@ function App() {
             <CardContent className="space-y-3 text-sm leading-6 text-slate-600"><p>จะส่งเนื้อหาไปยัง Google Gemini ผ่าน Cloudflare Worker เท่านั้น ไม่มี API key ใน browser</p><p>ไม่เก็บเนื้อหารายงานหรือไฟล์ถาวร และจะไม่บันทึกเนื้อหาใน log</p><p>สำหรับผู้ใช้อายุ 18 ปีขึ้นไปเท่านั้น</p></CardContent>
           </Card>
         </div>
+
+        <Card className="mt-6">
+          <CardHeader><CardTitle>รูบริกสำหรับตรวจ</CardTitle><CardDescription>แก้ไขเกณฑ์และน้ำหนักได้ตามรายวิชา หัวข้อที่ปิดจะไม่ถูกนำไปคำนวณทั้งตัวเศษและตัวหารของคะแนนรวม</CardDescription></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-2 sm:max-w-md"><label className="text-sm font-medium" htmlFor="rubric-template">เทมเพลต</label><select id="rubric-template" className="h-9 rounded-lg border border-slate-300 bg-white px-3 text-sm" value={templateId} onChange={(event) => selectTemplate(event.target.value)}>{rubricTemplates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600"><Badge variant="outline">เปิดใช้งาน {rubric.filter((section) => section.enabled).length}/{rubric.length} หัวข้อ</Badge><Badge variant="outline">น้ำหนักรวมที่ใช้ {Number.isFinite(enabledWeight) ? enabledWeight : 'ไม่ถูกต้อง'}</Badge></div>
+            <div className="space-y-3">
+              {rubric.map((section) => <div key={section.id} className={`rounded-lg border p-4 ${section.enabled ? 'bg-white' : 'bg-slate-100 opacity-75'}`}>
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_7rem_auto] lg:items-start">
+                  <label className="space-y-1 text-xs font-medium text-slate-600"><span>หัวข้อ</span><Input aria-label={`ชื่อหัวข้อ ${section.title}`} value={section.title} onChange={(event) => updateSection(section.id, { title: event.target.value })} /></label>
+                  <label className="space-y-1 text-xs font-medium text-slate-600"><span>เกณฑ์</span><Textarea aria-label={`เกณฑ์ ${section.title}`} className="min-h-20" value={section.criteria} onChange={(event) => updateSection(section.id, { criteria: event.target.value })} /></label>
+                  <label className="space-y-1 text-xs font-medium text-slate-600"><span>น้ำหนัก</span><Input aria-label={`น้ำหนัก ${section.title}`} type="number" min="0" step="0.5" value={Number.isNaN(section.weight) ? '' : section.weight} onChange={(event) => updateSection(section.id, { weight: event.target.valueAsNumber })} /></label>
+                  <div className="flex gap-2 pt-5"><Button type="button" size="sm" variant={section.enabled ? 'outline' : 'secondary'} onClick={() => updateSection(section.id, { enabled: !section.enabled })}>{section.enabled ? 'ปิดหัวข้อ' : 'เปิดหัวข้อ'}</Button><Button type="button" size="sm" variant="destructive" aria-label={`ลบ ${section.title}`} onClick={() => setRubric((sections) => sections.filter((item) => item.id !== section.id))}>ลบ</Button></div>
+                </div>
+              </div>)}
+            </div>
+            {!rubricValidation.success && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>รูบริกยังไม่พร้อมใช้งาน</AlertTitle><AlertDescription>{rubricValidation.error.issues.map((issue) => issue.message).join(' · ')}</AlertDescription></Alert>}
+            <Button type="button" variant="outline" onClick={addSection}>เพิ่มหัวข้อ</Button>
+          </CardContent>
+        </Card>
 
         {(state === 'preview' || state === 'editing' || state === 'ready') && <Card className="mt-6">
           <CardHeader><CardTitle>2. ตรวจสอบก่อนส่ง</CardTitle><CardDescription>นี่คือตัวอย่างข้อความที่จะใช้วิเคราะห์ โปรดตรวจหรือแก้ไขในกล่องข้อความด้านบน แล้วจึงยืนยัน</CardDescription></CardHeader>

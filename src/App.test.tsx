@@ -33,4 +33,14 @@ describe('App', () => {
     expect(await screen.findByText(/ดึงข้อความจาก 1 หน้าแล้ว/)).toBeInTheDocument()
     expect(screen.getByText('บทนำ โครงงานทดสอบ PDF')).toBeInTheDocument()
   })
+
+  it('lets the user add and disable rubric sections', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    expect(screen.getByText('เปิดใช้งาน 9/9 หัวข้อ')).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: 'ปิดหัวข้อ' })[0])
+    expect(screen.getByText('เปิดใช้งาน 8/9 หัวข้อ')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'เพิ่มหัวข้อ' }))
+    expect(screen.getByLabelText('ชื่อหัวข้อ หัวข้อใหม่')).toBeInTheDocument()
+  })
 })
