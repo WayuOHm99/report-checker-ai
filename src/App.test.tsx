@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -113,6 +113,21 @@ describe('App', () => {
     expect(screen.getByText(/ตรวจขนาดเอกสาร/)).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
     expect(screen.getByText('ความสอดคล้องระหว่างบท')).toBeInTheDocument()
+  })
+
+  it('scrolls to and focuses the progress section when analysis starts', async () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาสำหรับตรวจและติดตามความคืบหน้า')
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+
+    const progressSection = await screen.findByRole('region', { name: 'กำลังตรวจรายงาน' })
+    await waitFor(() => {
+      expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+      expect(progressSection).toHaveFocus()
+    })
   })
 
   it('distinguishes a timeout from a user cancellation and offers a controlled retry', async () => {

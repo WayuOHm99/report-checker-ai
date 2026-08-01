@@ -102,6 +102,7 @@ function App() {
   const idempotencyKeyRef = useRef<string | null>(null)
   const pdfAbortRef = useRef<AbortController | null>(null)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const analyzingRef = useRef<HTMLElement | null>(null)
   const resultRef = useRef<HTMLElement | null>(null)
   const { register, reset, setValue, watch, formState: { errors }, trigger } = useForm<SourceForm>({
     resolver: zodResolver(sourceSchema), defaultValues: { reportText: initialDraft.reportText }, mode: 'onChange',
@@ -141,6 +142,15 @@ function App() {
     window.addEventListener('beforeunload', warnBeforeLeaving)
     return () => window.removeEventListener('beforeunload', warnBeforeLeaving)
   }, [state, text])
+
+  useEffect(() => {
+    if (state !== 'analyzing') return
+    const frame = window.requestAnimationFrame(() => {
+      analyzingRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+      analyzingRef.current?.focus({ preventScroll: true })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [state])
 
   useEffect(() => {
     if (state !== 'result') return
@@ -454,7 +464,7 @@ function App() {
           </CardContent>
         </Card>
 
-        {state === 'analyzing' && <Card className="mt-5" aria-live="polite"><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card>}
+        {state === 'analyzing' && <section ref={analyzingRef} tabIndex={-1} className="mt-5 scroll-mt-4 outline-none" aria-label="กำลังตรวจรายงาน" aria-live="polite"><Card><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card></section>}
 
         {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={startAnalysis}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
 
