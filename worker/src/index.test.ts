@@ -37,7 +37,7 @@ describe('POST /api/analyze', () => {
   it('enforces the IP and anonymous-token request limit when KV is configured', async () => {
     const rateLimit = new MemoryKv()
     const env = { MOCK_ANALYSIS: 'true', RATE_LIMIT: rateLimit } satisfies Env
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       const response = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': `test-idempotency-key-${attempt}`, 'CF-Connecting-IP': '198.51.100.7' }, body: JSON.stringify(body) }), env)
       expect(response.status).toBe(200)
     }
