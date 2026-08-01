@@ -386,7 +386,7 @@ function App() {
       <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
         <header className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="sr-only">ผู้ช่วยตรวจรายงานด้วย AI</h1>
+            <h1 className="sr-only">ตรวจรายงานด้วย AI</h1>
             <p className="max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
