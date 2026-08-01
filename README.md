@@ -63,7 +63,7 @@ npx wrangler secret put GEMINI_API_KEY
 
 ## Production ที่มีอยู่
 
-- Pages: https://report-checker-ai.pages.dev
+- Pages: https://reportzcheckxai.pages.dev
 - Worker: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
 - Model config: `gemini-3.6-flash`
 

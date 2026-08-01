@@ -17,7 +17,7 @@
     "MOCK_ANALYSIS": "false",
     "DAILY_BUDGET_LIMIT": "100",
     "DAILY_TOKEN_BUDGET": "2000000",
-    "ALLOWED_ORIGIN": "https://report-checker-ai.pages.dev,https://reportcheckai.com,https://www.reportcheckai.com"
+    "ALLOWED_ORIGIN": "https://report-checker-ai.pages.dev,https://reportzcheckxai.pages.dev"
   },
   "kv_namespaces": [
     {

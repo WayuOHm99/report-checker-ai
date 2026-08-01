@@ -67,17 +67,15 @@ describe('POST /api/analyze', () => {
     expect((await response.json() as { model: string }).model).toBe('mock-analysis-v1')
   })
 
-  it('allows browser CORS only for the configured Pages and custom origins', async () => {
-    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://report-checker-ai.pages.dev,https://reportcheckai.com,https://www.reportcheckai.com' } satisfies AnalysisEnv
+  it('allows browser CORS only for the configured Pages origins', async () => {
+    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://report-checker-ai.pages.dev,https://reportzcheckxai.pages.dev' } satisfies AnalysisEnv
     const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://report-checker-ai.pages.dev' } }), env)
     const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.report-checker-ai.pages.dev' } }), env)
-    const customDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportcheckai.com' } }), env)
-    const customWwwDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://www.reportcheckai.com' } }), env)
+    const newPagesDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportzcheckxai.pages.dev' } }), env)
     const rejected = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example' } }), env)
     expect(allowed.headers.get('access-control-allow-origin')).toBe('https://report-checker-ai.pages.dev')
     expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.report-checker-ai.pages.dev')
-    expect(customDomain.headers.get('access-control-allow-origin')).toBe('https://reportcheckai.com')
-    expect(customWwwDomain.headers.get('access-control-allow-origin')).toBe('https://www.reportcheckai.com')
+    expect(newPagesDomain.headers.get('access-control-allow-origin')).toBe('https://reportzcheckxai.pages.dev')
     expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
   })
 
