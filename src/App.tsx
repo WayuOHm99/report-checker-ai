@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlertCircle, CheckCircle2, FileText, LoaderCircle, ShieldCheck, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
 
@@ -11,11 +11,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
+import { extractPdfText } from './lib/pdf'
 
 const MAX_CHARS = 200_000
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 
-const sourceSchema = z.object({ reportText: z.string().max(MAX_CHARS, 'ข้อความยาวเกิน 200,000 ตัวอักษร') })
+const sourceSchema = z.object({
+  reportText: z.string().max(MAX_CHARS, 'ข้อความยาวเกิน 200,000 ตัวอักษร — ระบบยังไม่ได้ตัดข้อความใด ๆ'),
+})
 type SourceForm = z.infer<typeof sourceSchema>
 
 export type AnalysisState = 'idle' | 'input' | 'preview' | 'editing' | 'ready' | 'analyzing' | 'result' | 'error'
@@ -32,44 +35,84 @@ const mockAnalysis = {
 }
 
 const stateLabels: Record<AnalysisState, string> = {
-  idle: 'พร้อมเริ่มต้น', input: 'กำลังรับเนื้อหา', preview: 'ตรวจสอบตัวอย่าง', editing: 'กำลังแก้ไข',
-  ready: 'พร้อมส่งตรวจ', analyzing: 'กำลังวิเคราะห์', result: 'แสดงผลแล้ว', error: 'ต้องแก้ไขข้อมูล',
+  idle: 'พร้อมเริ่มต้น',
+  input: 'กำลังรับเนื้อหา',
+  preview: 'ตรวจสอบตัวอย่าง',
+  editing: 'กำลังแก้ไข',
+  ready: 'พร้อมส่งตรวจ',
+  analyzing: 'กำลังวิเคราะห์',
+  result: 'แสดงผลแล้ว',
+  error: 'ต้องแก้ไขข้อมูล',
 }
 
 function App() {
   const [state, setState] = useState<AnalysisState>('idle')
   const [fileName, setFileName] = useState<string | null>(null)
   const [fileNotice, setFileNotice] = useState<string | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [isExtracting, setIsExtracting] = useState(false)
   const [result, setResult] = useState<typeof mockAnalysis | null>(null)
   const timeoutRef = useRef<number | null>(null)
-  const { register, getValues, watch, formState: { errors }, trigger } = useForm<SourceForm>({
+  const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const { register, getValues, setValue, watch, formState: { errors }, trigger } = useForm<SourceForm>({
     resolver: zodResolver(sourceSchema),
     defaultValues: { reportText: '' },
     mode: 'onChange',
   })
   const text = watch('reportText')
+  const reportTextField = register('reportText')
 
   useEffect(() => () => { if (timeoutRef.current) window.clearTimeout(timeoutRef.current) }, [])
 
+  const editText = () => {
+    setState('editing')
+    window.requestAnimationFrame(() => editorRef.current?.focus())
+  }
+
   const proceedToPreview = async () => {
     const valid = await trigger('reportText')
-    if (!valid || !getValues('reportText').trim()) { setState('error'); return }
+    if (!valid || !getValues('reportText').trim()) {
+      setState('error')
+      return
+    }
     setState('preview')
   }
 
-  const handleFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     setFileNotice(null)
+    setWarnings([])
     if (!file) return
+
     if (file.type !== 'application/pdf') {
-      setFileName(null); setFileNotice('รองรับเฉพาะไฟล์ PDF'); setState('error'); return
+      setFileName(null)
+      setFileNotice('รองรับเฉพาะไฟล์ PDF ที่มี MIME type เป็น application/pdf')
+      setState('error')
+      return
     }
     if (file.size > MAX_FILE_BYTES) {
-      setFileName(null); setFileNotice('ไฟล์มีขนาดเกิน 10 MB จึงยังไม่รับส่ง'); setState('error'); return
+      setFileName(null)
+      setFileNotice('ไฟล์มีขนาดเกิน 10 MB จึงยังไม่รับส่งและไม่มีการอ่านข้อความจากไฟล์')
+      setState('error')
+      return
     }
+
+    setIsExtracting(true)
     setFileName(file.name)
-    setFileNotice('เลือกไฟล์แล้ว — การดึง text layer และ preview จาก PDF จะเปิดใช้ใน Phase 2')
     setState('input')
+    try {
+      const extraction = await extractPdfText(file)
+      setValue('reportText', extraction.text, { shouldDirty: true, shouldValidate: true })
+      setWarnings(extraction.warnings)
+      setFileNotice(`ดึงข้อความจาก ${extraction.pageCount} หน้าแล้ว — โปรดตรวจและแก้ไขตัวอย่างก่อนยืนยัน`)
+      setState(extraction.text.length > MAX_CHARS ? 'error' : 'preview')
+    } catch {
+      setFileNotice('ไม่สามารถอ่านข้อความจาก PDF นี้ได้ อาจเป็นไฟล์เสียหาย เข้ารหัส หรือไม่ใช่ PDF ที่รองรับ')
+      setState('error')
+    } finally {
+      setIsExtracting(false)
+      event.target.value = ''
+    }
   }
 
   const startMockAnalysis = () => {
@@ -80,6 +123,9 @@ function App() {
       setState('result')
     }, 750)
   }
+
+  const currentLength = text.length
+  const exceedsLimit = currentLength > MAX_CHARS
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
@@ -105,46 +151,50 @@ function App() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium" htmlFor="report-text">ข้อความรายงาน</label>
-                <Textarea id="report-text" aria-label="ข้อความรายงาน" className="min-h-72 resize-y leading-6" placeholder="วางเนื้อหารายงานที่นี่…" {...register('reportText', { onChange: () => state === 'idle' && setState('input') })} disabled={state === 'analyzing'} />
-                <div className="flex justify-between text-xs text-slate-500"><span>{errors.reportText?.message ?? 'ข้อมูลจะยังไม่ถูกส่งจนกว่าจะยืนยัน'}</span><span>{text.length.toLocaleString()} / {MAX_CHARS.toLocaleString()} ตัวอักษร</span></div>
+                <Textarea
+                  id="report-text"
+                  aria-label="ข้อความรายงาน"
+                  className="min-h-72 resize-y leading-6"
+                  placeholder="วางเนื้อหารายงานที่นี่…"
+                  {...reportTextField}
+                  ref={(element) => { reportTextField.ref(element); editorRef.current = element }}
+                  onChange={(event) => {
+                    reportTextField.onChange(event)
+                    if (state !== 'analyzing') setState('input')
+                  }}
+                  disabled={state === 'analyzing' || isExtracting}
+                />
+                <div className="flex justify-between gap-4 text-xs text-slate-500"><span>{errors.reportText?.message ?? 'ข้อมูลจะยังไม่ถูกส่งจนกว่าคุณจะยืนยัน'}</span><span className={exceedsLimit ? 'font-medium text-red-700' : ''}>{currentLength.toLocaleString()} / {MAX_CHARS.toLocaleString()} ตัวอักษร</span></div>
               </div>
+
+              {exceedsLimit && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>เนื้อหาเกินขนาดที่ส่งวิเคราะห์ได้</AlertTitle><AlertDescription>ระบบยังไม่ได้ตัดข้อความหรือส่งข้อมูลส่วนใด โปรดแก้ไขให้เหลือไม่เกิน 200,000 ตัวอักษร แล้วตรวจตัวอย่างอีกครั้ง การแบ่งเอกสารจะเกิดขึ้นเฉพาะในระบบจริงเมื่อคุณยืนยันเท่านั้น</AlertDescription></Alert>}
+
               <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
                 <label className="flex cursor-pointer items-center gap-3 text-sm font-medium" htmlFor="pdf-upload"><Upload className="size-5 text-indigo-600" /> อัปโหลด PDF <span className="font-normal text-slate-500">(สูงสุด 10 MB)</span></label>
-                <Input id="pdf-upload" className="sr-only" type="file" accept="application/pdf,.pdf" onChange={handleFile} disabled={state === 'analyzing'} />
+                <Input id="pdf-upload" className="sr-only" type="file" accept="application/pdf,.pdf" onChange={handleFile} disabled={state === 'analyzing' || isExtracting} />
+                {isExtracting && <p className="mt-2 flex items-center gap-2 text-sm text-indigo-700"><LoaderCircle className="size-4 animate-spin" />กำลังดึง text layer จาก PDF…</p>}
                 {fileName && <p className="mt-2 text-sm text-slate-700"><FileText className="mr-1 inline size-4" />{fileName}</p>}
                 {fileNotice && <p className="mt-2 text-xs text-slate-600">{fileNotice}</p>}
               </div>
-              <Button className="w-full sm:w-auto" onClick={proceedToPreview} disabled={state === 'analyzing' || !text.trim()}>ตรวจสอบและดูตัวอย่าง</Button>
+              {warnings.map((warning) => <Alert key={warning} className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>โปรดตรวจข้อความที่ดึงได้</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>)}
+              <Button className="w-full sm:w-auto" onClick={proceedToPreview} disabled={state === 'analyzing' || isExtracting || !text.trim() || exceedsLimit}>ตรวจสอบและดูตัวอย่าง</Button>
             </CardContent>
           </Card>
 
           <Card className="h-fit">
             <CardHeader><CardTitle>ความเป็นส่วนตัว</CardTitle><CardDescription>แนวทางสำหรับระบบจริงใน Phase ถัดไป</CardDescription></CardHeader>
-            <CardContent className="space-y-3 text-sm leading-6 text-slate-600">
-              <p>จะส่งเนื้อหาไปยัง Google Gemini ผ่าน Cloudflare Worker เท่านั้น ไม่มี API key ใน browser</p>
-              <p>ไม่เก็บเนื้อหารายงานหรือไฟล์ถาวร และจะไม่บันทึกเนื้อหาใน log</p>
-              <p>สำหรับผู้ใช้อายุ 18 ปีขึ้นไปเท่านั้น</p>
-            </CardContent>
+            <CardContent className="space-y-3 text-sm leading-6 text-slate-600"><p>จะส่งเนื้อหาไปยัง Google Gemini ผ่าน Cloudflare Worker เท่านั้น ไม่มี API key ใน browser</p><p>ไม่เก็บเนื้อหารายงานหรือไฟล์ถาวร และจะไม่บันทึกเนื้อหาใน log</p><p>สำหรับผู้ใช้อายุ 18 ปีขึ้นไปเท่านั้น</p></CardContent>
           </Card>
         </div>
 
         {(state === 'preview' || state === 'editing' || state === 'ready') && <Card className="mt-6">
-          <CardHeader><CardTitle>2. ตรวจสอบก่อนส่ง</CardTitle><CardDescription>โปรดตรวจเนื้อหาและยืนยันก่อนเริ่มวิเคราะห์</CardDescription></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{text}</div>
-            <div className="flex flex-wrap gap-3">
-              <Button variant="outline" onClick={() => setState('editing')}>แก้ไขข้อความ</Button>
-              {state !== 'ready' ? <Button onClick={() => setState('ready')}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startMockAnalysis}>เริ่มตรวจด้วย Mock AI</Button>}
-            </div>
-          </CardContent>
+          <CardHeader><CardTitle>2. ตรวจสอบก่อนส่ง</CardTitle><CardDescription>นี่คือตัวอย่างข้อความที่จะใช้วิเคราะห์ โปรดตรวจหรือแก้ไขในกล่องข้อความด้านบน แล้วจึงยืนยัน</CardDescription></CardHeader>
+          <CardContent className="space-y-4"><div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{text}</div><div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>แก้ไขข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startMockAnalysis}>เริ่มตรวจด้วย Mock AI</Button>}</div></CardContent>
         </Card>}
 
-        {state === 'analyzing' && <Card className="mt-6"><CardContent className="space-y-3 pt-4"><div className="flex items-center gap-2 text-sm font-medium"><LoaderCircle className="size-4 animate-spin" />กำลังวิเคราะห์ด้วย mock response…</div><Progress value={56} /><p className="text-xs text-slate-500">Phase 1 ยังไม่เรียก Gemini หรือส่งข้อมูลออกจาก browser</p></CardContent></Card>}
+        {state === 'analyzing' && <Card className="mt-6"><CardContent className="space-y-3 pt-4"><div className="flex items-center gap-2 text-sm font-medium"><LoaderCircle className="size-4 animate-spin" />กำลังวิเคราะห์ด้วย mock response…</div><Progress value={56} /><p className="text-xs text-slate-500">ยังไม่เรียก Gemini หรือส่งข้อมูลออกจาก browser</p></CardContent></Card>}
 
-        {state === 'result' && result && <Card className="mt-6 border-emerald-200">
-          <CardHeader><CardTitle>ผลวิเคราะห์ตัวอย่าง</CardTitle><CardDescription>Mock data · {result.model} · {result.rubricVersion}</CardDescription></CardHeader>
-          <CardContent className="space-y-4"><div className="text-4xl font-semibold text-emerald-700">{result.overallScore}%</div><div className="grid gap-3 sm:grid-cols-3">{result.sections.map((section) => <div key={section.title} className="rounded-lg border p-3"><div className="flex justify-between font-medium"><span>{section.title}</span><span>{section.score}/3</span></div><p className="mt-2 text-xs leading-5 text-slate-600">{section.reason}</p></div>)}</div></CardContent>
-        </Card>}
+        {state === 'result' && result && <Card className="mt-6 border-emerald-200"><CardHeader><CardTitle>ผลวิเคราะห์ตัวอย่าง</CardTitle><CardDescription>Mock data · {result.model} · {result.rubricVersion}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="text-4xl font-semibold text-emerald-700">{result.overallScore}%</div><div className="grid gap-3 sm:grid-cols-3">{result.sections.map((section) => <div key={section.title} className="rounded-lg border p-3"><div className="flex justify-between font-medium"><span>{section.title}</span><span>{section.score}/3</span></div><p className="mt-2 text-xs leading-5 text-slate-600">{section.reason}</p></div>)}</div></CardContent></Card>}
       </div>
     </main>
   )

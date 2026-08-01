@@ -35,7 +35,7 @@ npm run build
 
 ## ข้อจำกัดชั่วคราว
 
-- ปุ่ม PDF ใน Phase 1 ตรวจ MIME/ขนาดและแสดงชื่อไฟล์เท่านั้น; การอ่าน text layer ด้วย PDF.js, preview และการเตือน PDF สแกนจะทำใน Phase 2
+- PDF.js ดึง text layer จาก PDF และเปิดให้ตรวจ/แก้ไขข้อความก่อนยืนยัน; PDF สแกนที่ไม่มี text layer จะแจ้งเตือน โดย MVP จะไม่ทำ OCR
 - mock response อยู่ใน `src/App.tsx`; จะย้ายไปเรียก `POST /api/analyze` ผ่าน Cloudflare Worker ใน Phase 5
 - ยังไม่มี Worker, KV, Gemini credential หรือการ deploy และไม่มี Netlify ในโปรเจกต์
 
