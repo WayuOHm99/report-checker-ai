@@ -43,4 +43,15 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'เพิ่มหัวข้อ' }))
     expect(screen.getByLabelText('ชื่อหัวข้อ หัวข้อใหม่')).toBeInTheDocument()
   })
+
+  it('shows detailed mock results only after content confirmation', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาสำหรับตรวจ')
+    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
+    await user.click(await screen.findByRole('button', { name: 'ยืนยันเนื้อหา' }))
+    await user.click(screen.getByRole('button', { name: 'เริ่มตรวจด้วย Mock AI' }))
+    expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
+    expect(screen.getByText('ความสอดคล้องระหว่างบท')).toBeInTheDocument()
+  })
 })

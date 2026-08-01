@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { extractPdfText } from './lib/pdf'
 import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, rubricSchema, rubricTemplates, type RubricSection } from './lib/rubric'
 import { analyzeReferences } from './lib/references'
+import { createMockAnalysis, type AnalysisResult } from './lib/analysis'
 
 const MAX_CHARS = 200_000
 const MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -24,17 +25,6 @@ const sourceSchema = z.object({
 type SourceForm = z.infer<typeof sourceSchema>
 
 export type AnalysisState = 'idle' | 'input' | 'preview' | 'editing' | 'ready' | 'analyzing' | 'result' | 'error'
-
-const mockAnalysis = {
-  overallScore: 78,
-  model: 'mock-analysis-v1',
-  rubricVersion: 'default-th-v1',
-  sections: [
-    { title: 'บทนำ', score: 3, reason: 'ระบุหัวข้อและบริบทของโครงงานชัดเจน' },
-    { title: 'วัตถุประสงค์', score: 2, reason: 'พบวัตถุประสงค์ แต่ยังวัดผลได้ไม่ครบทุกข้อ' },
-    { title: 'วิธีดำเนินงาน', score: 2, reason: 'อธิบายขั้นตอนหลักแล้ว ควรเพิ่มเกณฑ์ประเมินผล' },
-  ],
-}
 
 const stateLabels: Record<AnalysisState, string> = {
   idle: 'พร้อมเริ่มต้น',
@@ -53,7 +43,7 @@ function App() {
   const [fileNotice, setFileNotice] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
   const [isExtracting, setIsExtracting] = useState(false)
-  const [result, setResult] = useState<typeof mockAnalysis | null>(null)
+  const [result, setResult] = useState<AnalysisResult | null>(null)
   const [templateId, setTemplateId] = useState(DEFAULT_RUBRIC_TEMPLATE_ID)
   const [rubric, setRubric] = useState<RubricSection[]>(() => cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID).sections)
   const timeoutRef = useRef<number | null>(null)
@@ -123,7 +113,8 @@ function App() {
     setState('analyzing')
     setResult(null)
     timeoutRef.current = window.setTimeout(() => {
-      setResult(mockAnalysis)
+      const rubricVersion = rubricTemplates.find((template) => template.id === templateId)?.version ?? 'custom-rubric-v1'
+      setResult(createMockAnalysis(rubric, referenceSummary, rubricVersion))
       setState('result')
     }, 750)
   }
@@ -241,12 +232,22 @@ function App() {
 
         {(state === 'preview' || state === 'editing' || state === 'ready') && <Card className="mt-6">
           <CardHeader><CardTitle>2. ตรวจสอบก่อนส่ง</CardTitle><CardDescription>นี่คือตัวอย่างข้อความที่จะใช้วิเคราะห์ โปรดตรวจหรือแก้ไขในกล่องข้อความด้านบน แล้วจึงยืนยัน</CardDescription></CardHeader>
-          <CardContent className="space-y-4"><div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{text}</div><div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>แก้ไขข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startMockAnalysis}>เริ่มตรวจด้วย Mock AI</Button>}</div></CardContent>
+          <CardContent className="space-y-4"><div className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border bg-slate-50 p-4 text-sm leading-6">{text}</div><div className="flex flex-wrap gap-3"><Button variant="outline" onClick={editText}>แก้ไขข้อความ</Button>{state !== 'ready' ? <Button onClick={() => setState('ready')}><CheckCircle2 />ยืนยันเนื้อหา</Button> : <Button onClick={startMockAnalysis} disabled={!rubricValidation.success}>เริ่มตรวจด้วย Mock AI</Button>}</div></CardContent>
         </Card>}
 
         {state === 'analyzing' && <Card className="mt-6"><CardContent className="space-y-3 pt-4"><div className="flex items-center gap-2 text-sm font-medium"><LoaderCircle className="size-4 animate-spin" />กำลังวิเคราะห์ด้วย mock response…</div><Progress value={56} /><p className="text-xs text-slate-500">ยังไม่เรียก Gemini หรือส่งข้อมูลออกจาก browser</p></CardContent></Card>}
 
-        {state === 'result' && result && <Card className="mt-6 border-emerald-200"><CardHeader><CardTitle>ผลวิเคราะห์ตัวอย่าง</CardTitle><CardDescription>Mock data · {result.model} · {result.rubricVersion}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="text-4xl font-semibold text-emerald-700">{result.overallScore}%</div><div className="grid gap-3 sm:grid-cols-3">{result.sections.map((section) => <div key={section.title} className="rounded-lg border p-3"><div className="flex justify-between font-medium"><span>{section.title}</span><span>{section.score}/3</span></div><p className="mt-2 text-xs leading-5 text-slate-600">{section.reason}</p></div>)}</div></CardContent></Card>}
+        {state === 'result' && result && <section className="mt-6 space-y-6" aria-label="ผลวิเคราะห์">
+          <Card className="border-emerald-200"><CardHeader><CardTitle>ผลวิเคราะห์เบื้องต้น</CardTitle><CardDescription>Model: {result.model} · Rubric: {result.rubricVersion}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยสูตรตามน้ำหนักของหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><Badge variant="outline">{result.sections.length} หัวข้อที่ใช้คำนวณ</Badge></CardContent></Card>
+
+          <Alert className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>AI อาจคลาดเคลื่อน</AlertTitle><AlertDescription>ใช้ผลนี้เพื่อช่วยทบทวนงานเท่านั้น ไม่ใช่คำตัดสินแทนอาจารย์ และไม่ใช่ผลตรวจลอกเลียนผลงาน</AlertDescription></Alert>
+
+          <div className="grid gap-4 lg:grid-cols-2">{result.sections.map((section) => <Card key={section.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{section.title}</CardTitle><CardDescription>น้ำหนัก {section.weight} · confidence {Math.round(section.confidence * 100)}%</CardDescription></div><Badge>{section.score}/3</Badge></div></CardHeader><CardContent className="space-y-3 text-sm"><div><p className="font-medium">เหตุผล</p><p className="mt-1 leading-6 text-slate-600">{section.reason}</p></div><div><p className="font-medium">หลักฐาน</p><ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.evidence.map((item) => <li key={item}>{item}</li>)}</ul></div><div><p className="font-medium">สิ่งที่อาจขาด</p><ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.missing.map((item) => <li key={item}>{item}</li>)}</ul></div><div><p className="font-medium">คำแนะนำ</p><p className="mt-1 leading-6 text-slate-600">{section.recommendation}</p></div></CardContent></Card>)}</div>
+
+          <div className="grid gap-6 lg:grid-cols-2"><Card><CardHeader><CardTitle>ความสอดคล้องระหว่างบท</CardTitle><CardDescription>วัตถุประสงค์ · วิธีดำเนินงาน · ผล · สรุปผล</CardDescription></CardHeader><CardContent><ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700">{result.consistencyNotes.map((note) => <li key={note}>{note}</li>)}</ul></CardContent></Card><Card><CardHeader><CardTitle>เอกสารอ้างอิง</CardTitle><CardDescription>ผลตรวจรูปแบบเบื้องต้น</CardDescription></CardHeader><CardContent className="space-y-3 text-sm leading-6 text-slate-700"><p>{result.referenceComment}</p>{referenceSummary.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5">{referenceSummary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</CardContent></Card></div>
+
+          {result.qualityWarnings.length > 0 && <Card><CardHeader><CardTitle>คำเตือนคุณภาพข้อความ</CardTitle></CardHeader><CardContent><ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">{result.qualityWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></CardContent></Card>}
+        </section>}
       </div>
     </main>
   )
