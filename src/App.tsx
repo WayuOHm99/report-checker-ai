@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertCircle, CheckCircle2, ChevronDown, FileText, LoaderCircle, RotateCcw, ShieldCheck, Upload } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, FileText, LoaderCircle, RotateCcw, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -373,12 +373,11 @@ function App() {
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-950">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:py-10">
-        <header className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <div className="mb-3 flex items-center gap-2 text-sm font-medium text-indigo-700"><ShieldCheck className="size-4" /> ผู้ช่วยตรวจรายงานด้วย AI</div>
-            <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">reportcheck</h1>
-            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
+      <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
+        <header className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="sr-only">ผู้ช่วยตรวจรายงานด้วย AI</h1>
+            <p className="max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="w-fit" aria-live="polite">สถานะ: {stateLabels[state]}</Badge>
@@ -386,7 +385,7 @@ function App() {
           </div>
         </header>
 
-        <Alert className="mb-6 border-amber-200 bg-amber-50 text-amber-950">
+        <Alert className="mb-5 border-amber-200 bg-amber-50 text-amber-950">
           <AlertCircle className="size-4" />
           <AlertTitle>ใช้เป็นผู้ช่วยทบทวนเท่านั้น</AlertTitle>
           <AlertDescription>AI อาจคลาดเคลื่อน ผลไม่ใช่คำตัดสินแทนอาจารย์ และระบบนี้ไม่ตรวจหรือรับรองการลอกเลียนผลงาน</AlertDescription>
@@ -394,12 +393,12 @@ function App() {
 
         <div>
           <Card>
-            <CardHeader><CardTitle>ขั้นที่ 1 — เพิ่มรายงาน</CardTitle><CardDescription>รองรับเนื้อหารายงานหลักไม่เกิน 200,000 ตัวอักษร และ PDF ไม่เกิน 10 MB</CardDescription></CardHeader>
+            <CardHeader><CardTitle>เพิ่มรายงาน</CardTitle><CardDescription>รองรับเนื้อหารายงานหลักไม่เกิน 200,000 ตัวอักษร และ PDF ไม่เกิน 10 MB</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium" htmlFor="report-text">ข้อความรายงาน</label>
                 <Textarea
-                  id="report-text" aria-label="ข้อความรายงาน" className="h-80 resize-none overflow-y-scroll leading-6"
+                  id="report-text" aria-label="ข้อความรายงาน" className="h-64 resize-none overflow-y-scroll leading-6 sm:h-80"
                   placeholder="วางเนื้อหารายงานที่นี่…" {...reportTextField}
                   ref={(element) => { reportTextField.ref(element); editorRef.current = element }}
                   onChange={(event) => { reportTextField.onChange(event); markContentChanged() }}
@@ -432,7 +431,7 @@ function App() {
           </Card>
         </div>
 
-        <Card className="mt-6">
+        <Card className="mt-5">
           <CardHeader><CardTitle>ตั้งค่าเพิ่มเติม — เกณฑ์การตรวจ</CardTitle><CardDescription>ไม่จำเป็นต้องแก้ ใช้ค่าเริ่มต้นแล้วกดตรวจได้ทันที หรือปรับหัวข้อและน้ำหนักเมื่อต้องการ</CardDescription></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,24rem)_auto] sm:items-end">
@@ -455,11 +454,11 @@ function App() {
           </CardContent>
         </Card>
 
-        {state === 'analyzing' && <Card className="mt-6" aria-live="polite"><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card>}
+        {state === 'analyzing' && <Card className="mt-5" aria-live="polite"><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card>}
 
-        {analysisMessage && <Alert className={`mt-6 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={startAnalysis}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
+        {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={startAnalysis}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
 
-        {state === 'result' && result && <section ref={resultRef} tabIndex={-1} className="mt-6 scroll-mt-4 space-y-6 outline-none" aria-label="ผลวิเคราะห์">
+        {state === 'result' && result && <section ref={resultRef} tabIndex={-1} className="mt-5 scroll-mt-4 space-y-5 outline-none" aria-label="ผลวิเคราะห์">
           <Card className="border-emerald-200"><CardHeader><CardTitle>ผลตรวจเบื้องต้น</CardTitle><CardDescription>โมเดล {result.model} · เกณฑ์รุ่น {result.rubricVersion}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยโค้ดจากหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">{result.sections.length} หัวข้อ</Badge><Button variant="outline" onClick={() => { setResult(null); setState('ready') }}>ตรวจอีกครั้ง</Button></div></CardContent></Card>
           <Alert className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>AI อาจคลาดเคลื่อน</AlertTitle><AlertDescription>ใช้ผลนี้ช่วยทบทวนงาน ไม่ใช่คำตัดสินแทนอาจารย์ และไม่ใช่ผลตรวจลอกเลียนผลงาน</AlertDescription></Alert>
           <div className="grid gap-4 lg:grid-cols-2">{result.sections.map((section) => <Card key={section.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{section.title}</CardTitle><CardDescription>น้ำหนัก {section.weight} · ความมั่นใจของ AI {Math.round(section.confidence * 100)}%</CardDescription></div><Badge>{section.score}/3</Badge></div></CardHeader><CardContent className="space-y-3 text-sm"><div><p className="font-medium">เหตุผล</p><p className="mt-1 leading-6 text-slate-600">{section.reason}</p></div><div><p className="font-medium">หลักฐานที่พบ</p>{section.evidence.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">ยังไม่พบหลักฐานชัดเจน</p>}</div><div><p className="font-medium">สิ่งที่อาจขาด</p>{section.missing.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.missing.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">AI ไม่ได้ระบุสิ่งที่ขาด</p>}</div><div><p className="font-medium">คำแนะนำ</p><p className="mt-1 leading-6 text-slate-600">{section.recommendation}</p></div></CardContent></Card>)}</div>
@@ -467,7 +466,7 @@ function App() {
           {result.qualityWarnings.length > 0 && <Card><CardHeader><CardTitle>คำเตือนคุณภาพข้อความ</CardTitle></CardHeader><CardContent><ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">{result.qualityWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></CardContent></Card>}
         </section>}
 
-        <Card className="mt-6">
+        <Card className="mt-5">
           <CardHeader><CardTitle>ข้อมูลอ้างอิงที่ระบบพบ</CardTitle><CardDescription>ตรวจด้วยกฎพื้นฐานเท่านั้น ไม่ยืนยันว่าแหล่งอ้างอิงมีอยู่จริงหรือถูกต้อง</CardDescription></CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2"><Badge variant="outline">รายการท้ายเล่ม {referenceSummary.bibliographyEntryCount}</Badge><Badge variant="outline">อ้างอิงแบบตัวเลข {referenceSummary.numericCitationIds.length}</Badge><Badge variant="outline">ผู้แต่ง-ปี {referenceSummary.authorYearCitationCount}</Badge></div>
