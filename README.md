@@ -24,6 +24,7 @@ npm run test
 npm run build
 npm run worker:check
 npm run worker:types
+npm run test:e2e
 ```
 
 ## สิ่งที่มีใน Phase 1
@@ -39,6 +40,11 @@ npm run worker:types
 - Cloudflare Worker มี `POST /api/analyze` แบบ mock พร้อม request validation, idempotency, rate-limit/KV design และคำนวณคะแนนรวมด้วยโค้ด
 - หน้าแสดงผลมีคะแนนรวมและผลรายหัวข้อ พร้อมเหตุผล หลักฐาน สิ่งที่ขาด คำแนะนำ confidence ความสอดคล้อง และคำเตือนอ้างอิง
 - มี progress 7 ขั้น ป้องกันการส่งซ้ำ timeout 45 วินาที ปุ่มยกเลิก และ retry ที่ผู้ใช้ควบคุมได้
+
+## ขอบเขตการทดสอบปัจจุบัน
+
+- Vitest ครอบคลุมข้อความว่าง/เกินขนาด, flow การยืนยัน, PDF text layer และ PDF สแกน, รูบริก, citation, request validation, prompt injection mock และ rate limit
+- ตรวจ browser จริงใน local ก่อน release; การทดสอบ Gemini timeout และผล JSON เสียในบริการจริงต้องทำหลังตั้ง Worker Secret และใช้ environment ทดสอบ
 
 ## ข้อจำกัดชั่วคราว
 

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -34,6 +34,21 @@ describe('App', () => {
     expect(screen.getByText('บทนำ โครงงานทดสอบ PDF')).toBeInTheDocument()
   })
 
+  it('warns when a PDF has no text layer and does not offer OCR', async () => {
+    vi.mocked(extractPdfText).mockResolvedValue({ pageCount: 2, text: '', warnings: ['ไม่พบ text layer ใน PDF นี้ ซึ่งอาจเป็น PDF สแกน ระบบ MVP จะไม่ทำ OCR โปรดวางข้อความแทน'] })
+    const user = userEvent.setup()
+    render(<App />)
+    await user.upload(screen.getByLabelText(/อัปโหลด PDF/), new File(['pdf'], 'scanned.pdf', { type: 'application/pdf' }))
+    expect(await screen.findByText(/ระบบ MVP จะไม่ทำ OCR/)).toBeInTheDocument()
+  })
+
+  it('blocks text over 200,000 characters without truncating it', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('ข้อความรายงาน'), { target: { value: 'ก'.repeat(200_001) } })
+    expect(screen.getByText(/ระบบยังไม่ได้ตัดข้อความหรือส่งข้อมูลส่วนใด/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' })).toBeDisabled()
+  })
+
   it('lets the user add and disable rubric sections', async () => {
     const user = userEvent.setup()
     render(<App />)
@@ -42,6 +57,12 @@ describe('App', () => {
     expect(screen.getByText('เปิดใช้งาน 8/9 หัวข้อ')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'เพิ่มหัวข้อ' }))
     expect(screen.getByLabelText('ชื่อหัวข้อ หัวข้อใหม่')).toBeInTheDocument()
+  })
+
+  it('rejects a rubric with a negative weight', () => {
+    render(<App />)
+    fireEvent.change(screen.getByLabelText('น้ำหนัก บทนำ'), { target: { value: '-1', valueAsNumber: -1 } })
+    expect(screen.getByText(/น้ำหนักต้องไม่ติดลบ/)).toBeInTheDocument()
   })
 
   it('shows detailed mock results only after content confirmation', async () => {
