@@ -18,10 +18,10 @@ export type ReferenceCheckSummary = {
 
 const bibliographyHeadingPattern = /^\s*(เอกสารอ้างอิง|บรรณานุกรม|references|bibliography)\s*:?[\s]*$/i
 const numberedEntryPattern = /^\s*(\d+)\s*[.)]\s*(.+)$/
-const yearPattern = /\b(?:19|20)\d{2}[a-z]?\b/i
+const yearPattern = /\b(?:19|20|24|25)\d{2}[a-z]?\b/i
 const numericCitationPattern = /\[(\d+(?:\s*[,;–-]\s*\d+)*)\]/g
-const authorYearCitationPattern = /\(([^()\n]{2,80}),\s*(?:19|20)\d{2}[a-z]?\)/gi
-const narrativeAuthorYearPattern = /\b[A-Za-zก-๙][A-Za-zก-๙ .'-]{1,60}\s*\((?:19|20)\d{2}[a-z]?\)/gi
+const authorYearCitationPattern = /\(([^()\n]{2,80}),\s*(?:19|20|24|25)\d{2}[a-z]?\)/gi
+const narrativeAuthorYearPattern = /\b[A-Za-zก-๙][A-Za-zก-๙ .'-]{1,60}\s*\((?:19|20|24|25)\d{2}[a-z]?\)/gi
 
 function uniqueSorted(values: number[]) {
   return [...new Set(values)].sort((left, right) => left - right)
@@ -30,8 +30,17 @@ function uniqueSorted(values: number[]) {
 function getNumericCitations(text: string) {
   const citationIds: number[] = []
   for (const match of text.matchAll(numericCitationPattern)) {
-    for (const value of match[1].split(/[,;–-]/)) {
-      const id = Number(value.trim())
+    for (const group of match[1].split(/[,;]/)) {
+      const range = group.trim().match(/^(\d+)\s*[–-]\s*(\d+)$/)
+      if (range) {
+        const start = Number(range[1])
+        const end = Number(range[2])
+        if (start > 0 && end >= start && end - start <= 100) {
+          for (let id = start; id <= end; id += 1) citationIds.push(id)
+        }
+        continue
+      }
+      const id = Number(group.trim())
       if (Number.isSafeInteger(id) && id > 0) citationIds.push(id)
     }
   }

@@ -1,60 +1,118 @@
 import { GoogleGenAI } from '@google/genai'
 import { z } from 'zod'
 
-import { ANALYSIS_RESPONSE_JSON_SCHEMA, buildAnalysisContents, SYSTEM_INSTRUCTION } from './prompt'
+import { ANALYSIS_RESPONSE_JSON_SCHEMA, buildAnalysisContents, prepareWorkerDocument, splitDocumentForAnalysis, SYSTEM_INSTRUCTION } from './prompt'
 
 const MAX_CHARS_DEFAULT = 200_000
+const MAX_RAW_CHARS = 300_000
 const MAX_REQUEST_BYTES = 1_100_000
 const RATE_LIMIT_PER_HOUR = 10
 const IDEMPOTENCY_TTL_SECONDS = 10 * 60
+const SINGLE_CALL_TOKEN_LIMIT = 110_000
+const DEFAULT_DAILY_TOKEN_BUDGET = 2_000_000
 
-type KVStore = {
-  get(key: string): Promise<string | null>
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
-}
+type RateLimitStore = Pick<KVNamespace, 'get' | 'put'>
 
-export type Env = {
-  GEMINI_API_KEY?: string
-  GEMINI_MODEL?: string
-  MAX_CHARS?: string
-  MOCK_ANALYSIS?: string
-  DAILY_BUDGET_LIMIT?: string
-  ALLOWED_ORIGIN?: string
-  RATE_LIMIT?: KVStore
-}
+export type AnalysisEnv = Partial<Pick<Env,
+  'GEMINI_API_KEY' | 'GEMINI_MODEL' | 'MAX_CHARS' | 'MOCK_ANALYSIS' | 'DAILY_BUDGET_LIMIT' |
+  'DAILY_TOKEN_BUDGET' | 'ALLOWED_ORIGIN'>> & { RATE_LIMIT?: RateLimitStore }
 
 const rubricSectionSchema = z.object({
-  id: z.string().min(1).max(100),
+  id: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(120),
   criteria: z.string().trim().min(1).max(2_000),
   weight: z.number().finite().nonnegative(),
   enabled: z.boolean(),
 })
 
+const rubricSchema = z.object({
+  version: z.string().trim().min(1).max(100),
+  sections: z.array(rubricSectionSchema).min(1).max(30),
+}).superRefine(({ sections }, context) => {
+  const ids = new Set<string>()
+  sections.forEach((section, index) => {
+    if (ids.has(section.id)) context.addIssue({ code: 'custom', path: ['sections', index, 'id'], message: `rubric id ซ้ำ: ${section.id}` })
+    ids.add(section.id)
+  })
+})
+
 const requestSchema = z.object({
-  reportText: z.string().trim().min(1),
+  reportText: z.string().trim().min(1).max(MAX_RAW_CHARS),
   anonymousToken: z.string().min(16).max(200),
-  rubric: z.object({ version: z.string().min(1).max(100), sections: z.array(rubricSectionSchema).min(1).max(30) }),
+  rubric: rubricSchema,
   referenceSummary: z.object({
     bibliographyDetected: z.boolean(), bibliographyEntryCount: z.number().int().nonnegative(), numericCitationCount: z.number().int().nonnegative(),
     authorYearCitationCount: z.number().int().nonnegative(), unmatchedNumericCitationCount: z.number().int().nonnegative(), potentiallyUncitedEntryCount: z.number().int().nonnegative(),
   }),
+  documentOptions: z.object({ excludeAppendix: z.boolean() }).optional().default({ excludeAppendix: false }),
 })
 
 const analysisSectionSchema = z.object({
-  id: z.string(), score: z.number().int().min(0).max(3), reason: z.string(), evidence: z.array(z.string()).max(3), missing: z.array(z.string()).max(3), recommendation: z.string(), confidence: z.number().min(0).max(1),
+  id: z.string().trim().min(1).max(100), score: z.number().int().min(0).max(3),
+  reason: z.string().trim().min(1).max(2_000), evidence: z.array(z.string().max(1_000)).max(3),
+  missing: z.array(z.string().max(1_000)).max(3), recommendation: z.string().trim().min(1).max(2_000),
+  confidence: z.number().min(0).max(1),
 })
 const modelResponseSchema = z.object({
-  sections: z.array(analysisSectionSchema), qualityWarnings: z.array(z.string()).max(5), consistencyNotes: z.array(z.string()).max(5), referenceComment: z.string(),
+  sections: z.array(analysisSectionSchema).min(1).max(30),
+  qualityWarnings: z.array(z.string().max(1_000)).max(5),
+  consistencyNotes: z.array(z.string().max(1_000)).max(5),
+  referenceComment: z.string().max(2_000),
 })
 
-const jsonHeaders = { 'content-type': 'application/json; charset=UTF-8', 'cache-control': 'no-store' }
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: jsonHeaders })
+type ModelResponse = z.infer<typeof modelResponseSchema>
+type ActiveSection = ReturnType<typeof sanitizeRubric>[number]
 
-function withCors(response: Response, request: Request, env: Env) {
+class ApiFailure extends Error {
+  readonly code: string
+  readonly status: number
+  readonly retryable: boolean
+
+  constructor(code: string, message: string, status: number, retryable = false) {
+    super(message)
+    this.name = 'ApiFailure'
+    this.code = code
+    this.status = status
+    this.retryable = retryable
+  }
+}
+
+const securityHeaders = {
+  'cache-control': 'no-store',
+  'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+  'content-type': 'application/json; charset=UTF-8',
+  'referrer-policy': 'no-referrer',
+  'strict-transport-security': 'max-age=31536000; includeSubDomains',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: securityHeaders })
+}
+
+function errorResponse(error: ApiFailure) {
+  return json({ error: error.message, code: error.code, retryable: error.retryable }, error.status)
+}
+
+function isAllowedOrigin(origin: string, env: AnalysisEnv) {
+  if (!env.ALLOWED_ORIGIN) return false
+  const configured = env.ALLOWED_ORIGIN.split(',').map((value) => value.trim()).filter(Boolean)
+  if (configured.includes(origin)) return true
+  try {
+    const candidate = new URL(origin)
+    return configured.some((allowed) => {
+      const base = new URL(allowed)
+      return candidate.protocol === 'https:' && base.protocol === 'https:' && base.hostname.endsWith('.pages.dev') && candidate.hostname.endsWith(`.${base.hostname}`)
+    })
+  } catch {
+    return false
+  }
+}
+
+function withCors(response: Response, request: Request, env: AnalysisEnv) {
   const origin = request.headers.get('origin')
-  if (!origin || !env.ALLOWED_ORIGIN || origin !== env.ALLOWED_ORIGIN) return response
-
+  if (!origin || !isAllowedOrigin(origin, env)) return response
   const headers = new Headers(response.headers)
   headers.set('access-control-allow-origin', origin)
   headers.set('access-control-allow-methods', 'POST, OPTIONS')
@@ -66,8 +124,8 @@ function withCors(response: Response, request: Request, env: Env) {
 
 async function readJsonWithinLimit(request: Request) {
   const declaredSize = Number(request.headers.get('content-length'))
-  if (Number.isFinite(declaredSize) && declaredSize > MAX_REQUEST_BYTES) throw new RangeError('request-too-large')
-  if (!request.body) throw new SyntaxError('missing-body')
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_REQUEST_BYTES) throw new ApiFailure('REQUEST_TOO_LARGE', 'คำขอมีขนาดเกินที่ระบบรองรับ และยังไม่มีข้อมูลส่วนใดถูกส่งให้ AI', 413)
+  if (!request.body) throw new ApiFailure('MISSING_BODY', 'ไม่พบข้อมูลรายงานในคำขอ', 400)
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -76,7 +134,7 @@ async function readJsonWithinLimit(request: Request) {
       const { done, value } = await reader.read()
       if (done) break
       total += value.byteLength
-      if (total > MAX_REQUEST_BYTES) throw new RangeError('request-too-large')
+      if (total > MAX_REQUEST_BYTES) throw new ApiFailure('REQUEST_TOO_LARGE', 'คำขอมีขนาดเกินที่ระบบรองรับ และยังไม่มีข้อมูลส่วนใดถูกส่งให้ AI', 413)
       chunks.push(value)
     }
   } finally {
@@ -85,10 +143,10 @@ async function readJsonWithinLimit(request: Request) {
   const bytes = new Uint8Array(total)
   let offset = 0
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-  return JSON.parse(new TextDecoder().decode(bytes)) as unknown
+  try { return JSON.parse(new TextDecoder().decode(bytes)) as unknown } catch { throw new ApiFailure('INVALID_JSON', 'รูปแบบคำขอไม่ถูกต้อง โปรดรีเฟรชหน้าแล้วลองใหม่', 400) }
 }
 
-function maxChars(env: Env) {
+function maxChars(env: AnalysisEnv) {
   const configured = Number(env.MAX_CHARS)
   return Number.isSafeInteger(configured) && configured > 0 ? configured : MAX_CHARS_DEFAULT
 }
@@ -97,17 +155,22 @@ function getClientIp(request: Request) {
   return request.headers.get('CF-Connecting-IP') ?? 'unknown'
 }
 
-async function incrementLimit(store: KVStore | undefined, key: string, limit: number) {
+async function hashKey(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function incrementCounter(store: RateLimitStore | undefined, key: string, limit: number, amount = 1, expirationTtl = 60 * 60) {
   if (!store) return false
   const existing = Number(await store.get(key) ?? '0')
-  if (existing >= limit) return true
-  await store.put(key, String(existing + 1), { expirationTtl: 60 * 60 })
+  if (!Number.isFinite(existing) || existing + amount > limit) return true
+  await store.put(key, String(existing + amount), { expirationTtl })
   return false
 }
 
 function sanitizeRubric(sections: z.infer<typeof rubricSectionSchema>[]) {
   return sections.filter((section) => section.enabled && section.weight > 0).map((section) => ({
-    id: section.id, title: section.title.trim(), criteria: section.criteria.trim(), weight: section.weight,
+    id: section.id.trim(), title: section.title.trim(), criteria: section.criteria.trim(), weight: section.weight,
   }))
 }
 
@@ -118,92 +181,173 @@ function calculateOverallScore(sections: Array<{ score: number; weight: number }
   return Math.round((numerator / denominator) * 100)
 }
 
-function mockModelResponse(sections: ReturnType<typeof sanitizeRubric>) {
+function mockModelResponse(sections: ActiveSection[]): ModelResponse {
   return {
-    sections: sections.map((section) => ({ id: section.id, score: 2, reason: `พบเนื้อหาที่เกี่ยวข้องกับ ${section.title} ในระดับเบื้องต้น`, evidence: [], missing: ['โปรดยืนยันด้วยอาจารย์ผู้สอน'], recommendation: `เพิ่มรายละเอียดตามเกณฑ์: ${section.criteria}`, confidence: 0.5 })),
+    sections: sections.map((section) => ({ id: section.id, score: 2, reason: `พบเนื้อหาที่เกี่ยวข้องกับ ${section.title} ในระดับเบื้องต้น`, evidence: [], missing: ['โปรดยืนยันรายละเอียดกับอาจารย์ผู้สอน'], recommendation: `เพิ่มรายละเอียดตามเกณฑ์: ${section.criteria}`, confidence: 0.5 })),
     qualityWarnings: ['นี่คือ mock response — ยังไม่ได้เรียก Gemini'], consistencyNotes: [], referenceComment: 'ใช้ผลตรวจอ้างอิงเบื้องต้นประกอบการพิจารณา',
   }
-}
-
-async function callGemini(prompt: string, env: Env) {
-  if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured')
-  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
-  const model = env.GEMINI_MODEL ?? 'gemini-3.6-flash'
-  const tokenCount = await ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${prompt}` })
-  if ((tokenCount.totalTokens ?? 0) > 120_000) throw new Error('Document exceeds the configured Gemini token limit')
-  const response = await ai.models.generateContent({ model, contents: prompt, config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
-  return response.text ?? ''
-}
-
-export async function handleAnalyze(request: Request, env: Env) {
-  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) return json({ error: 'Content-Type ต้องเป็น application/json' }, 415)
-  const idempotencyKey = request.headers.get('Idempotency-Key')
-  if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 200) return json({ error: 'กรุณาระบุ Idempotency-Key ที่ถูกต้อง' }, 400)
-  if (env.RATE_LIMIT) {
-    const cached = await env.RATE_LIMIT.get(`idempotency:${idempotencyKey}`)
-    if (cached) return new Response(cached, { headers: jsonHeaders })
-  }
-
-  let rawBody: unknown
-  try { rawBody = await readJsonWithinLimit(request) } catch (error) {
-    if (error instanceof RangeError) return json({ error: 'request มีขนาดเกินที่ระบบอนุญาต' }, 413)
-    return json({ error: 'รูปแบบ request ต้องเป็น JSON' }, 400)
-  }
-  const parsed = requestSchema.safeParse(rawBody)
-  if (!parsed.success) return json({ error: 'ข้อมูลที่ส่งมาไม่ถูกต้อง', details: parsed.error.issues.map((issue) => issue.message) }, 400)
-  if (parsed.data.reportText.length > maxChars(env)) return json({ error: 'ข้อความยาวเกินขนาดที่อนุญาต ระบบไม่ได้ตัดข้อความ' }, 413)
-
-  const activeSections = sanitizeRubric(parsed.data.rubric.sections)
-  if (activeSections.length === 0) return json({ error: 'รูบริกต้องมีหัวข้อที่เปิดใช้งานและน้ำหนักมากกว่า 0 อย่างน้อยหนึ่งหัวข้อ' }, 400)
-  if (activeSections.reduce((sum, section) => sum + section.weight, 0) <= 0) return json({ error: 'น้ำหนักรวมของหัวข้อที่เปิดใช้งานต้องมากกว่า 0' }, 400)
-
-  if (env.RATE_LIMIT) {
-    const window = new Date().toISOString().slice(0, 13)
-    const limitedIp = await incrementLimit(env.RATE_LIMIT, `rate:ip:${getClientIp(request)}:${window}`, RATE_LIMIT_PER_HOUR)
-    const limitedToken = await incrementLimit(env.RATE_LIMIT, `rate:anon:${parsed.data.anonymousToken}:${window}`, RATE_LIMIT_PER_HOUR)
-    if (limitedIp || limitedToken) return json({ error: 'ส่งคำขอครบขีดจำกัดชั่วคราวแล้ว โปรดลองใหม่ภายหลัง' }, 429)
-  } else if (env.MOCK_ANALYSIS !== 'true') return json({ error: 'ยังไม่ได้ตั้งค่า rate-limit storage' }, 503)
-
-  const prompt = buildAnalysisContents(parsed.data, activeSections)
-  let modelOutput: unknown
-  if (env.MOCK_ANALYSIS === 'true') modelOutput = mockModelResponse(activeSections)
-  else {
-    const dailyLimit = Number(env.DAILY_BUDGET_LIMIT ?? '100')
-    if (env.RATE_LIMIT) {
-      const dailyKey = `budget:${new Date().toISOString().slice(0, 10)}`
-      if (Number(await env.RATE_LIMIT.get(dailyKey) ?? '0') >= dailyLimit) return json({ error: 'งบประมาณรายวันของระบบครบแล้ว' }, 429)
-      await env.RATE_LIMIT.put(dailyKey, String(Number(await env.RATE_LIMIT.get(dailyKey) ?? '0') + 1), { expirationTtl: 60 * 60 * 36 })
-    }
-    let firstOutput: string
-    try { firstOutput = await callGemini(prompt, env) } catch { return json({ error: 'ไม่สามารถเชื่อมต่อ Gemini ได้ในขณะนี้' }, 502) }
-    let validated = modelResponseSchema.safeParse(safelyParseJson(firstOutput))
-    if (!validated?.success) {
-      try { validated = modelResponseSchema.safeParse(safelyParseJson(await callGemini(`${prompt}\n\nReturn valid JSON only.`, env))) } catch { validated = undefined }
-    }
-    if (!validated?.success) return json({ error: 'ผลลัพธ์ AI ไม่อยู่ในรูปแบบที่ระบบรองรับ' }, 502)
-    modelOutput = validated.data
-  }
-
-  const model = modelResponseSchema.parse(modelOutput)
-  const byId = new Map(model.sections.map((section) => [section.id, section]))
-  const sections = activeSections.map((section) => ({ ...section, ...(byId.get(section.id) ?? { score: 0, reason: 'AI ไม่ส่งผลลัพธ์สำหรับหัวข้อนี้', evidence: [], missing: [], recommendation: 'โปรดลองใหม่', confidence: 0 }) }))
-  const responseBody = { overallScore: calculateOverallScore(sections), sections, qualityWarnings: model.qualityWarnings, consistencyNotes: model.consistencyNotes, referenceComment: model.referenceComment, model: env.MOCK_ANALYSIS === 'true' ? 'mock-analysis-v1' : env.GEMINI_MODEL ?? 'gemini-3.6-flash', rubricVersion: parsed.data.rubric.version }
-  const serialized = JSON.stringify(responseBody)
-  if (env.RATE_LIMIT) await env.RATE_LIMIT.put(`idempotency:${idempotencyKey}`, serialized, { expirationTtl: IDEMPOTENCY_TTL_SECONDS })
-  return new Response(serialized, { headers: jsonHeaders })
 }
 
 function safelyParseJson(value: string) {
   try { return JSON.parse(value) as unknown } catch { return undefined }
 }
 
+function validateExactSections(value: unknown, activeSections: ActiveSection[]) {
+  const parsed = modelResponseSchema.safeParse(value)
+  if (!parsed.success) return undefined
+  const expected = activeSections.map((section) => section.id)
+  const received = parsed.data.sections.map((section) => section.id)
+  if (new Set(received).size !== received.length || received.length !== expected.length || expected.some((id) => !received.includes(id))) return undefined
+  return parsed.data
+}
+
+function uniqueLimited(values: string[], limit: number) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, limit)
+}
+
+function mergeChunkResponses(responses: ModelResponse[], activeSections: ActiveSection[]) {
+  if (responses.length === 1) return responses[0]
+  const sections = activeSections.map((active) => {
+    const candidates = responses.map((response) => response.sections.find((section) => section.id === active.id)).filter((section): section is ModelResponse['sections'][number] => Boolean(section))
+    const strongest = [...candidates].sort((left, right) => right.score - left.score || right.confidence - left.confidence)[0]
+    return {
+      ...strongest,
+      evidence: uniqueLimited(candidates.flatMap((candidate) => candidate.evidence), 3),
+      missing: uniqueLimited(candidates.flatMap((candidate) => candidate.missing), 3),
+      confidence: Math.max(...candidates.map((candidate) => candidate.confidence)),
+    }
+  })
+  return {
+    sections,
+    qualityWarnings: uniqueLimited(['เอกสารเกินขนาด token สำหรับการวิเคราะห์ครั้งเดียว ระบบจึงแบ่งเป็นส่วนโดยไม่ตัดข้อความ', ...responses.flatMap((response) => response.qualityWarnings)], 5),
+    consistencyNotes: uniqueLimited(responses.flatMap((response) => response.consistencyNotes), 5),
+    referenceComment: responses.map((response) => response.referenceComment).find(Boolean) ?? 'โปรดยืนยันเอกสารอ้างอิงกับเกณฑ์รายวิชา',
+  }
+}
+
+function mapGeminiError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : ''
+  if (message.includes('429') || message.includes('quota') || message.includes('resource_exhausted')) return new ApiFailure('GEMINI_QUOTA', 'โควตา Gemini เต็มชั่วคราว โปรดลองใหม่ภายหลัง', 429, true)
+  if (message.includes('401') || message.includes('403') || message.includes('api key')) return new ApiFailure('AI_CONFIGURATION', 'ระบบ AI ยังตั้งค่าไม่สมบูรณ์ กรุณาแจ้งผู้ดูแลระบบ', 503)
+  if (message.includes('model') && (message.includes('not found') || message.includes('invalid'))) return new ApiFailure('MODEL_UNAVAILABLE', 'โมเดล AI ที่ตั้งค่าไว้ยังไม่พร้อมใช้งาน กรุณาแจ้งผู้ดูแลระบบ', 503)
+  return new ApiFailure('GEMINI_UNAVAILABLE', 'ยังเชื่อมต่อ Gemini ไม่ได้ในขณะนี้ โปรดลองใหม่ภายหลัง', 502, true)
+}
+
+async function generateValidated(ai: GoogleGenAI, model: string, prompt: string, activeSections: ActiveSection[]) {
+  const generate = async (contents: string) => {
+    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
+    return response.text ?? ''
+  }
+  try {
+    const first = validateExactSections(safelyParseJson(await generate(prompt)), activeSections)
+    if (first) return first
+    const retry = validateExactSections(safelyParseJson(await generate(`${prompt}\n\nReturn valid JSON with every rubric id exactly once.`)), activeSections)
+    if (retry) return retry
+    throw new ApiFailure('INVALID_AI_RESPONSE', 'คำตอบจาก AI ไม่ครบตามหัวข้อที่กำหนด โปรดลองใหม่อีกครั้ง', 502, true)
+  } catch (error) {
+    if (error instanceof ApiFailure) throw error
+    throw mapGeminiError(error)
+  }
+}
+
+async function analyzeWithGemini(reportText: string, referenceSummary: unknown, activeSections: ActiveSection[], env: AnalysisEnv) {
+  if (!env.GEMINI_API_KEY) throw new ApiFailure('AI_CONFIGURATION', 'ระบบยังไม่ได้ตั้งค่า Gemini API key กรุณาแจ้งผู้ดูแลระบบ', 503)
+  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
+  const model = env.GEMINI_MODEL ?? 'gemini-3.6-flash'
+  const fullPrompt = buildAnalysisContents({ reportText, referenceSummary }, activeSections)
+  let fullTokenCount: number
+  try {
+    const count = await ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${fullPrompt}` })
+    fullTokenCount = count.totalTokens ?? 0
+  } catch (error) {
+    throw mapGeminiError(error)
+  }
+
+  const chunks = fullTokenCount <= SINGLE_CALL_TOKEN_LIMIT ? [reportText] : splitDocumentForAnalysis(reportText)
+  const prompts = chunks.map((chunk, index) => buildAnalysisContents({ reportText: chunk, referenceSummary }, activeSections, { index: index + 1, total: chunks.length }))
+  let plannedInputTokens = fullTokenCount
+  if (chunks.length > 1) {
+    try {
+      const counts = await Promise.all(prompts.map((prompt) => ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${prompt}` })))
+      plannedInputTokens = counts.reduce((sum, count) => sum + (count.totalTokens ?? 0), 0)
+    } catch (error) {
+      throw mapGeminiError(error)
+    }
+  }
+  if (prompts.length > 10 || plannedInputTokens > 1_000_000) throw new ApiFailure('DOCUMENT_TOKEN_LIMIT', 'เอกสารมี token มากเกินขนาดที่ระบบแบ่งวิเคราะห์ได้ โปรดลดเนื้อหาแล้วลองใหม่', 413)
+
+  const dailyRequestLimit = Number(env.DAILY_BUDGET_LIMIT ?? '100')
+  const dailyTokenLimit = Number(env.DAILY_TOKEN_BUDGET ?? String(DEFAULT_DAILY_TOKEN_BUDGET))
+  const date = new Date().toISOString().slice(0, 10)
+  if (env.RATE_LIMIT) {
+    if (await incrementCounter(env.RATE_LIMIT, `budget:requests:${date}`, Number.isFinite(dailyRequestLimit) ? dailyRequestLimit : 100, 1, 60 * 60 * 36)) throw new ApiFailure('DAILY_REQUEST_BUDGET', 'จำนวนการตรวจของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429, true)
+    if (await incrementCounter(env.RATE_LIMIT, `budget:tokens:${date}`, Number.isFinite(dailyTokenLimit) ? dailyTokenLimit : DEFAULT_DAILY_TOKEN_BUDGET, plannedInputTokens * 2, 60 * 60 * 36)) throw new ApiFailure('DAILY_TOKEN_BUDGET', 'งบประมาณ token ของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429, true)
+  }
+
+  const responses: ModelResponse[] = []
+  for (const prompt of prompts) responses.push(await generateValidated(ai, model, prompt, activeSections))
+  return { response: mergeChunkResponses(responses, activeSections), model }
+}
+
+export async function handleAnalyze(request: Request, env: AnalysisEnv) {
+  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw new ApiFailure('UNSUPPORTED_CONTENT_TYPE', 'คำขอต้องเป็น JSON', 415)
+  const idempotencyKey = request.headers.get('Idempotency-Key')
+  if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 200) throw new ApiFailure('INVALID_IDEMPOTENCY_KEY', 'คำขอตรวจไม่สมบูรณ์ โปรดรีเฟรชหน้าแล้วลองใหม่', 400)
+  if (env.RATE_LIMIT) {
+    const cached = await env.RATE_LIMIT.get(`idempotency:${idempotencyKey}`)
+    if (cached) return new Response(cached, { headers: securityHeaders })
+  }
+
+  const parsed = requestSchema.safeParse(await readJsonWithinLimit(request))
+  if (!parsed.success) throw new ApiFailure('INVALID_REQUEST', 'ข้อมูลรายงานหรือเกณฑ์ไม่ถูกต้อง โปรดตรวจข้อมูลแล้วลองใหม่', 400)
+  const prepared = prepareWorkerDocument(parsed.data.reportText)
+  if (prepared.appendixHeading && !parsed.data.documentOptions.excludeAppendix) throw new ApiFailure('APPENDIX_CONFIRMATION_REQUIRED', `พบส่วน “${prepared.appendixHeading}” กรุณายืนยันการไม่นำภาคผนวกไปวิเคราะห์`, 409)
+  if (!prepared.mainText) throw new ApiFailure('EMPTY_MAIN_DOCUMENT', 'ไม่พบเนื้อหารายงานหลักก่อนภาคผนวก', 400)
+  if (prepared.mainText.length > maxChars(env)) throw new ApiFailure('DOCUMENT_CHAR_LIMIT', 'เนื้อหารายงานหลักยาวเกิน 200,000 ตัวอักษร ระบบไม่ได้ตัดหรือส่งข้อความ', 413)
+
+  const activeSections = sanitizeRubric(parsed.data.rubric.sections)
+  if (activeSections.length === 0) throw new ApiFailure('EMPTY_RUBRIC', 'ต้องมีหัวข้อที่นำมาคิดคะแนนและมีน้ำหนักมากกว่า 0 อย่างน้อยหนึ่งหัวข้อ', 400)
+
+  if (env.RATE_LIMIT) {
+    const window = new Date().toISOString().slice(0, 13)
+    const [ipHash, tokenHash] = await Promise.all([hashKey(getClientIp(request)), hashKey(parsed.data.anonymousToken)])
+    const limitedIp = await incrementCounter(env.RATE_LIMIT, `rate:ip:${ipHash}:${window}`, RATE_LIMIT_PER_HOUR)
+    const limitedToken = await incrementCounter(env.RATE_LIMIT, `rate:anon:${tokenHash}:${window}`, RATE_LIMIT_PER_HOUR)
+    if (limitedIp || limitedToken) throw new ApiFailure('RATE_LIMITED', 'ส่งคำขอครบขีดจำกัดชั่วคราวแล้ว โปรดลองใหม่ในชั่วโมงถัดไป', 429, true)
+  } else if (env.MOCK_ANALYSIS !== 'true') throw new ApiFailure('RATE_LIMIT_UNAVAILABLE', 'ระบบจำกัดคำขอยังไม่พร้อม กรุณาแจ้งผู้ดูแลระบบ', 503)
+
+  const modelOutput = env.MOCK_ANALYSIS === 'true'
+    ? { response: mockModelResponse(activeSections), model: 'mock-analysis-v1' }
+    : await analyzeWithGemini(prepared.mainText, parsed.data.referenceSummary, activeSections, env)
+  const byId = new Map(modelOutput.response.sections.map((section) => [section.id, section]))
+  const sections = activeSections.map((section) => ({ ...section, ...byId.get(section.id)! }))
+  const responseBody = {
+    overallScore: calculateOverallScore(sections), sections,
+    qualityWarnings: modelOutput.response.qualityWarnings,
+    consistencyNotes: modelOutput.response.consistencyNotes,
+    referenceComment: modelOutput.response.referenceComment,
+    model: modelOutput.model,
+    rubricVersion: parsed.data.rubric.version,
+    documentInfo: { appendixExcluded: Boolean(prepared.appendixHeading), excludedCharCount: prepared.excludedCharCount },
+  }
+  const serialized = JSON.stringify(responseBody)
+  if (env.RATE_LIMIT) await env.RATE_LIMIT.put(`idempotency:${idempotencyKey}`, serialized, { expirationTtl: IDEMPOTENCY_TTL_SECONDS })
+  return new Response(serialized, { headers: securityHeaders })
+}
+
 export default {
-  async fetch(request: Request, env: Env) {
+  async fetch(request: Request, env: Env | AnalysisEnv): Promise<Response> {
     const url = new URL(request.url)
     let response: Response
-    if (request.method === 'OPTIONS') response = new Response(null, { status: 204, headers: { allow: 'POST, OPTIONS' } })
-    else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
-    else response = json({ error: 'ไม่พบ endpoint' }, 404)
+    try {
+      if (request.method === 'OPTIONS') response = new Response(null, { status: 204, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
+      else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
+      else response = errorResponse(new ApiFailure('NOT_FOUND', 'ไม่พบ endpoint ที่เรียกใช้', 404))
+    } catch (error) {
+      const failure = error instanceof ApiFailure ? error : new ApiFailure('INTERNAL_ERROR', 'ระบบเกิดข้อผิดพลาดที่ไม่คาดคิด โปรดลองใหม่ภายหลัง', 500, true)
+      console.error(JSON.stringify({ event: 'analysis_request_failed', code: failure.code, status: failure.status, path: url.pathname }))
+      response = errorResponse(failure)
+    }
     return withCors(response, request, env)
   },
-}
+} satisfies ExportedHandler<Env>

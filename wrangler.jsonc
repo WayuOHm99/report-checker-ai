@@ -4,6 +4,9 @@
   "main": "worker/src/index.ts",
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": ["GEMINI_API_KEY"]
+  },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 0.1
@@ -13,6 +16,7 @@
     "MAX_CHARS": "200000",
     "MOCK_ANALYSIS": "false",
     "DAILY_BUDGET_LIMIT": "100",
+    "DAILY_TOKEN_BUDGET": "2000000",
     "ALLOWED_ORIGIN": "https://report-checker-ai.pages.dev"
   },
   "kv_namespaces": [

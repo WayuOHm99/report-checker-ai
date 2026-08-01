@@ -1,0 +1,9 @@
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://report-checker-ai-api.oomzazato01.workers.dev; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin

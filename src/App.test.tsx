@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 import { extractPdfText } from './lib/pdf'
@@ -8,6 +8,12 @@ import { extractPdfText } from './lib/pdf'
 vi.mock('./lib/pdf', () => ({ extractPdfText: vi.fn() }))
 
 describe('App', () => {
+  beforeEach(() => {
+    window.sessionStorage.clear()
+    vi.clearAllMocks()
+    vi.unstubAllEnvs()
+  })
+
   it('does not allow an empty report to move to preview', () => {
     render(<App />)
     expect(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' })).toBeDisabled()
@@ -30,7 +36,7 @@ describe('App', () => {
     const user = userEvent.setup()
     render(<App />)
     await user.upload(screen.getByLabelText(/อัปโหลด PDF/), new File(['pdf'], 'report.pdf', { type: 'application/pdf' }))
-    expect(await screen.findByText(/ดึงข้อความจาก 1 หน้าแล้ว/)).toBeInTheDocument()
+    expect(await screen.findByText(/อ่าน PDF ครบ 1 หน้าแล้ว/)).toBeInTheDocument()
     expect(screen.getByText('บทนำ โครงงานทดสอบ PDF')).toBeInTheDocument()
   })
 
@@ -49,18 +55,50 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' })).toBeDisabled()
   })
 
+  it('requires separate confirmation before excluding an appendix', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาหลัก\n\nภาคผนวก ก\nข้อมูลดิบ')
+    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
+    await user.click(screen.getByRole('checkbox', { name: /ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป/ }))
+    expect(screen.getByRole('button', { name: 'ยืนยันเนื้อหา' })).toBeDisabled()
+    await user.click(screen.getByRole('checkbox', { name: /ฉันตรวจแล้วและยืนยันว่าไม่นำส่วน/ }))
+    expect(screen.getByRole('button', { name: 'ยืนยันเนื้อหา' })).toBeEnabled()
+  })
+
+  it('restores a draft only from the current browser session', () => {
+    window.sessionStorage.setItem('report-checker-session-draft-v1', JSON.stringify({
+      reportText: 'ร่างรายงานในแท็บนี้', templateId: 'project-th-v1',
+      rubric: [{ id: 'intro', title: 'บทนำ', criteria: 'มีบริบท', weight: 1, enabled: true }],
+    }))
+    render(<App />)
+    expect(screen.getByLabelText('ข้อความรายงาน')).toHaveValue('ร่างรายงานในแท็บนี้')
+    expect(window.localStorage.getItem('report-checker-session-draft-v1')).toBeNull()
+  })
+
+  it('rejects a PDF over 10 MB before extraction', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const largeFile = new File([new Uint8Array((10 * 1024 * 1024) + 1)], 'large.pdf', { type: 'application/pdf' })
+    await user.upload(screen.getByLabelText(/อัปโหลด PDF/), largeFile)
+    expect(screen.getByText(/ไฟล์มีขนาดเกิน 10 MB/)).toBeInTheDocument()
+    expect(extractPdfText).not.toHaveBeenCalled()
+  })
+
   it('lets the user add and disable rubric sections', async () => {
     const user = userEvent.setup()
     render(<App />)
-    expect(screen.getByText('เปิดใช้งาน 9/9 หัวข้อ')).toBeInTheDocument()
-    await user.click(screen.getAllByRole('button', { name: 'ปิดหัวข้อ' })[0])
-    expect(screen.getByText('เปิดใช้งาน 8/9 หัวข้อ')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'เพิ่มหัวข้อ' }))
+    expect(screen.getByText('ใช้ 9/9 หัวข้อ')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'แก้ไขหัวข้อและน้ำหนัก' }))
+    await user.click(screen.getAllByRole('button', { name: 'ไม่นำมาคิดคะแนน' })[0])
+    expect(screen.getByText('ใช้ 8/9 หัวข้อ')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'เพิ่มหัวข้อใหม่' }))
     expect(screen.getByLabelText('ชื่อหัวข้อ หัวข้อใหม่')).toBeInTheDocument()
   })
 
   it('rejects a rubric with a negative weight', () => {
     render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'แก้ไขหัวข้อและน้ำหนัก' }))
     fireEvent.change(screen.getByLabelText('น้ำหนัก บทนำ'), { target: { value: '-1', valueAsNumber: -1 } })
     expect(screen.getByText(/น้ำหนักต้องไม่ติดลบ/)).toBeInTheDocument()
   })
@@ -70,10 +108,24 @@ describe('App', () => {
     render(<App />)
     await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาสำหรับตรวจ')
     await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
+    await user.click(await screen.findByRole('checkbox', { name: /ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป/ }))
     await user.click(await screen.findByRole('button', { name: 'ยืนยันเนื้อหา' }))
-    await user.click(screen.getByRole('button', { name: 'เริ่มตรวจด้วย Mock AI' }))
-    expect(screen.getByText(/ตรวจสอบข้อความ/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /เริ่มตรวจด้วย\s*ข้อมูลตัวอย่าง/ }))
+    expect(screen.getByText(/ตรวจขนาดเอกสาร/)).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
     expect(screen.getByText('ความสอดคล้องระหว่างบท')).toBeInTheDocument()
+  })
+
+  it('distinguishes a timeout from a user cancellation and offers a controlled retry', async () => {
+    vi.stubEnv('VITE_ANALYSIS_TIMEOUT_MS', '20')
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาสำหรับทดสอบ timeout โดยไม่ส่งข้อมูลไปยัง Gemini จริง')
+    await user.click(screen.getByRole('button', { name: 'ตรวจสอบและดูตัวอย่าง' }))
+    await user.click(await screen.findByRole('checkbox', { name: /ฉันยืนยันว่ามีอายุ 18 ปีขึ้นไป/ }))
+    await user.click(screen.getByRole('button', { name: 'ยืนยันเนื้อหา' }))
+    await user.click(screen.getByRole('button', { name: /เริ่มตรวจด้วย\s*ข้อมูลตัวอย่าง/ }))
+    expect(await screen.findByText(/การตรวจใช้เวลานานเกิน 2 นาที/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'ลองอีกครั้งด้วยคำขอเดิม' })).toBeInTheDocument()
   })
 })

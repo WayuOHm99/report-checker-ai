@@ -18,4 +18,18 @@ describe('analyzeReferences', () => {
     expect(result.authorYearCitationCount).toBe(1)
     expect(result.warnings).toContain('ไม่พบหัวข้อ “เอกสารอ้างอิง” หรือ “บรรณานุกรม” ที่ตรวจจับได้')
   })
+
+  it('recognizes Buddhist Era years used in Thai reports', () => {
+    const result = analyzeReferences('แนวคิดนี้ได้รับการศึกษาแล้ว (สมชาย ใจดี, 2566)\n\nบรรณานุกรม\nสมชาย ใจดี. (2566). งานวิจัยตัวอย่าง')
+
+    expect(result.authorYearCitationCount).toBe(1)
+    expect(result.bibliographyEntryCount).toBe(1)
+  })
+
+  it('expands numeric citation ranges', () => {
+    const result = analyzeReferences('เนื้อหาอ้างอิง [1-3]\n\nเอกสารอ้างอิง\n1. หนึ่ง 2024\n2. สอง 2024\n3. สาม 2024')
+
+    expect(result.numericCitationIds).toEqual([1, 2, 3])
+    expect(result.unmatchedNumericCitationIds).toEqual([])
+  })
 })
