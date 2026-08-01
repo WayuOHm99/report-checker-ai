@@ -9,7 +9,7 @@
     "head_sampling_rate": 0.1
   },
   "vars": {
-    "GEMINI_MODEL": "gemini-2.5-flash",
+    "GEMINI_MODEL": "gemini-3.6-flash",
     "MAX_CHARS": "200000",
     "MOCK_ANALYSIS": "false",
     "DAILY_BUDGET_LIMIT": "100",

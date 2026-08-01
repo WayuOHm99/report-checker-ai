@@ -63,6 +63,6 @@ npm run test:e2e
 - Pages: https://report-checker-ai.pages.dev
 - Worker API: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
 - The deployed frontend uses real analysis (`VITE_USE_MOCK_ANALYSIS=false`) and calls the Worker only. The Gemini key remains a Cloudflare Worker Secret.
-- The Worker is configured for Gemini `gemini-2.5-flash`, Cloudflare KV rate limiting, a daily request budget, and CORS restricted to the Pages origin.
+- The Worker is configured for Gemini `gemini-3.6-flash`, Cloudflare KV rate limiting, a daily request budget, and CORS restricted to the Pages origin.
 
 For local UI development, keep `.env` based on `.env.example` with `VITE_USE_MOCK_ANALYSIS=true`; never place a Gemini key in a `VITE_*` variable. Deployment configuration is applied in the Cloudflare dashboard/Wrangler, not committed to this repository.

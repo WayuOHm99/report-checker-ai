@@ -128,7 +128,7 @@ function mockModelResponse(sections: ReturnType<typeof sanitizeRubric>) {
 async function callGemini(prompt: string, env: Env) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is not configured')
   const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
-  const model = env.GEMINI_MODEL ?? 'gemini-2.5-flash'
+  const model = env.GEMINI_MODEL ?? 'gemini-3.6-flash'
   const tokenCount = await ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${prompt}` })
   if ((tokenCount.totalTokens ?? 0) > 120_000) throw new Error('Document exceeds the configured Gemini token limit')
   const response = await ai.models.generateContent({ model, contents: prompt, config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
@@ -187,7 +187,7 @@ export async function handleAnalyze(request: Request, env: Env) {
   const model = modelResponseSchema.parse(modelOutput)
   const byId = new Map(model.sections.map((section) => [section.id, section]))
   const sections = activeSections.map((section) => ({ ...section, ...(byId.get(section.id) ?? { score: 0, reason: 'AI ไม่ส่งผลลัพธ์สำหรับหัวข้อนี้', evidence: [], missing: [], recommendation: 'โปรดลองใหม่', confidence: 0 }) }))
-  const responseBody = { overallScore: calculateOverallScore(sections), sections, qualityWarnings: model.qualityWarnings, consistencyNotes: model.consistencyNotes, referenceComment: model.referenceComment, model: env.MOCK_ANALYSIS === 'true' ? 'mock-analysis-v1' : env.GEMINI_MODEL ?? 'gemini-2.5-flash', rubricVersion: parsed.data.rubric.version }
+  const responseBody = { overallScore: calculateOverallScore(sections), sections, qualityWarnings: model.qualityWarnings, consistencyNotes: model.consistencyNotes, referenceComment: model.referenceComment, model: env.MOCK_ANALYSIS === 'true' ? 'mock-analysis-v1' : env.GEMINI_MODEL ?? 'gemini-3.6-flash', rubricVersion: parsed.data.rubric.version }
   const serialized = JSON.stringify(responseBody)
   if (env.RATE_LIMIT) await env.RATE_LIMIT.put(`idempotency:${idempotencyKey}`, serialized, { expirationTtl: IDEMPOTENCY_TTL_SECONDS })
   return new Response(serialized, { headers: jsonHeaders })
