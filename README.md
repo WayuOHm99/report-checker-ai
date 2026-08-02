@@ -1,20 +1,96 @@
 # AI Report Check
 
-เว็บหน้าเดียว React + TypeScript + Vite สำหรับช่วยตรวจความครบถ้วนของโครงงานและรายงานก่อนส่งให้อาจารย์ ระบบไม่ใช่ผู้ตัดสินและไม่ตรวจลอกเลียนผลงาน
+> ผู้ช่วยตรวจความครบถ้วนของโครงงานและรายงานก่อนส่ง ด้วย React, Cloudflare Workers และ Gemini
 
-## เทคโนโลยี
+[![Live demo](https://img.shields.io/badge/demo-reportcheckxd.pages.dev-2563eb?style=flat-square)](https://reportcheckxd.pages.dev/)
+[![Tests](https://img.shields.io/badge/tests-49%20unit%20%7C%2028%20E2E%20%7C%2010%20TestSprite-16a34a?style=flat-square)](docs/testing-report.md)
 
-- Frontend: React, TypeScript, Vite, Tailwind CSS, shadcn/ui
-- PDF: PDF.js (อ่าน text layer เท่านั้น ไม่มี OCR)
-- API: Cloudflare Worker `POST /api/analyze`
-- AI: Gemini ผ่าน `@google/genai`; ใช้ 3.6 Flash เป็นหลักและ 3.5 Flash-Lite เป็นโมเดลสำรองอัตโนมัติ โดย API key อยู่ใน Worker Secret เท่านั้น
-- Validation: Zod
-- Rate limit/idempotency: Cloudflare KV
-- Tests: Vitest, React Testing Library และ Playwright
+![AI Report Check preview](public/og.png)
 
-## ติดตั้งและรันในเครื่อง
+## Project overview
 
-ต้องมี Node.js 24+ และ npm
+AI Report Check เป็น single-page web app สำหรับช่วยทบทวนรายงานก่อนส่ง ผู้ใช้วางข้อความหรืออัปโหลด PDF แล้วตรวจหัวข้อสำคัญ เช่น บทนำ วัตถุประสงค์ วิธีดำเนินงาน ผลลัพธ์ การอ้างอิง และภาคผนวกได้ใน workflow เดียว
+
+โปรเจกต์นี้ออกแบบให้เป็น **ผู้ช่วยทบทวน ไม่ใช่ผู้ตัดสิน** ผลจาก AI จึงแสดงหลักฐาน สิ่งที่อาจขาด และคำแนะนำเพื่อให้ผู้ใช้ตรวจเทียบกับรายงานต้นฉบับอีกครั้ง
+
+**Live demo:** [reportcheckxd.pages.dev](https://reportcheckxd.pages.dev/)
+
+## Why this project is interesting
+
+- ทำให้การตรวจรายงานที่ต้องอ่านซ้ำหลายส่วนกลายเป็น flow ที่สั้นและอธิบายได้
+- แยกการคำนวณคะแนนไว้ในโค้ด ไม่ปล่อยให้โมเดลคำนวณคะแนนรวมเอง
+- ป้องกันการส่งภาคผนวกโดยไม่ตั้งใจด้วย accessible confirmation dialog
+- อ่าน PDF เฉพาะ text layer พร้อมแจ้งเตือน PDF สแกนและ PDF หลายคอลัมน์
+- รองรับ rubric templates และ custom rubric พร้อม validation น้ำหนัก/หัวข้อ
+- ออกแบบ failure paths ตั้งแต่ต้น: timeout, cancel, retry, quota, malformed AI response และ idempotency
+- มี automated quality gate ตั้งแต่ unit test ถึง browser E2E และ TestSprite บน production URL
+
+## Architecture
+
+```mermaid
+flowchart LR
+  U[ผู้ใช้] --> FE[React + Vite SPA\nCloudflare Pages]
+  FE --> DOC[เตรียมเอกสาร\nPDF text layer + appendix]
+  FE --> REF[ตรวจ citation\nและ reference summary]
+  FE -->|POST /api/analyze| W[Cloudflare Worker]
+  W --> V[Zod validation\nrate limit + idempotency]
+  V --> AI[Gemini 3.6 Flash\nwith fallback model]
+  W --> KV[(Cloudflare KV\nshort-lived controls)]
+  AI --> W
+  W -->|validated JSON| FE
+  FE --> R[คะแนน รายหัวข้อ\nหลักฐาน และคำแนะนำ]
+```
+
+### Request lifecycle
+
+1. Frontend รับข้อความหรือ extract text layer จาก PDF ก่อนส่ง
+2. ระบบตรวจขนาดเอกสาร, appendix, references และ rubric ใน browser
+3. เมื่อผู้ใช้ยืนยัน จึงส่งเนื้อหาหลักไปยัง Worker
+4. Worker ตรวจ request ด้วย Zod, คุม rate limit/idempotency และเรียก Gemini
+5. Worker ตรวจ schema ของ AI response ก่อนส่งกลับ
+6. Frontend คำนวณคะแนนรวมและจัดลำดับ “สิ่งที่ควรแก้ก่อนส่ง” ด้วยโค้ด
+
+รายละเอียดเพิ่มเติมอยู่ใน [docs/architecture.md](docs/architecture.md)
+
+## Key user flows
+
+| Flow | สิ่งที่ผู้ใช้ทำ | สิ่งที่ระบบรับประกัน |
+| --- | --- | --- |
+| Text report | วางข้อความแล้วกดตรวจ | ป้องกันข้อความว่าง/ยาวเกิน และแสดง progress |
+| PDF report | อัปโหลด PDF | preview text layer, แจ้ง scanned PDF และอ่านหลายคอลัมน์อย่างระมัดระวัง |
+| Appendix | พบหัวข้อภาคผนวก | ต้องยืนยันผ่าน dialog ก่อนส่ง และยกเลิกได้โดยไม่ส่งข้อมูล |
+| Rubric editor | เลือก template หรือแก้หัวข้อ | validate title, criteria, enabled state และ weight |
+| Result review | ดูคะแนนและหลักฐาน | score คำนวณด้วยโค้ด พร้อม copy/download ผลตรวจ |
+
+## Tech stack
+
+- **Frontend:** React 19, TypeScript, Vite, Tailwind CSS, shadcn-style UI
+- **Document processing:** PDF.js, text-layer extraction, appendix detection
+- **Backend:** Cloudflare Worker, Zod, Cloudflare KV
+- **AI:** Google Gemini ผ่าน Worker เท่านั้น; API key ไม่อยู่ใน frontend
+- **Testing:** Vitest, React Testing Library, Playwright, oxlint และ TestSprite CLI
+- **Hosting:** Cloudflare Pages + Cloudflare Workers
+
+## Quality and verification
+
+| Check | Result |
+| --- | ---: |
+| `npm run lint` | passed |
+| `npm run test` | 49/49 passed |
+| `npm run build` | passed |
+| `npm run test:e2e` | 28/28 passed |
+| TestSprite production suite | 10/10 passed |
+
+อ่านรายละเอียด test cases, scope และข้อจำกัดได้ที่ [docs/testing-report.md](docs/testing-report.md)
+
+## Local development
+
+### Requirements
+
+- Node.js 24+
+- npm
+
+### Install and run
 
 ```bash
 npm install
@@ -22,56 +98,70 @@ copy .env.example .env
 npm run dev
 ```
 
-ค่าเริ่มต้น local ใช้ mock analysis และไม่ส่งรายงานออกจาก browser เปิด URL ที่ Vite แสดง ซึ่งปกติคือ `http://localhost:5173`
+เปิด `http://localhost:5173` แล้วใช้ข้อความสังเคราะห์สำหรับทดสอบ Local development จะใช้ mock analysis เป็นค่าเริ่มต้นเมื่อไม่มี production environment variables
 
-## คำสั่งตรวจสอบ
+### Verify locally
 
 ```bash
 npm run lint
 npm run test
 npm run build
-npm run worker:types
-npm run worker:check
 npm run test:e2e
 ```
 
-E2E รันบน Chromium desktop, Chrome mobile, Firefox และ WebKit รวมการอัปโหลด PDF text layer ภาษาไทย, PDF ไม่มีข้อความ และ PDF หลายคอลัมน์
-
-## พฤติกรรมสำคัญ
-
-- รองรับเนื้อหารายงานหลักไม่เกิน 200,000 ตัวอักษร, ข้อความรวมภาคผนวกไม่เกิน 300,000 ตัวอักษร และ PDF ไม่เกิน 10 MB
-- วางข้อความแล้วกด “ตรวจรายงาน” ครั้งเดียวได้ทันที โดยมีข้อความแจ้งการส่งข้อมูลไป Google Gemini ใต้ปุ่มแบบไม่กีดขวางการใช้งาน
-- แสดงและแก้ไขข้อความจาก PDF ก่อนส่ง; PDF สแกนจะแจ้งเตือนและไม่ทำ OCR
-- ตรวจพบภาคผนวก แสดงชื่อส่วนและจำนวนตัวอักษรที่ไม่นำไปวิเคราะห์ แล้วบังคับให้ผู้ใช้ยืนยัน
-- ส่งเอกสารหลักให้ Gemini ครั้งเดียวเป็นค่าเริ่มต้น แบ่งเอกสารเฉพาะเมื่อ `countTokens` เกินขนาดจริง
-- ตรวจ citation ด้วยกฎก่อนส่งเฉพาะ summary ให้ AI รองรับปี ค.ศ., พ.ศ. และช่วงเลขอ้างอิง เช่น `[1-3]`
-- ผู้ใช้เลือกเทมเพลต เพิ่ม/ลบ/ปิดหัวข้อ แก้เกณฑ์และน้ำหนักได้ โดยค่าขั้นสูงถูกพับไว้ตามค่าเริ่มต้น
-- คะแนนรวมคำนวณด้วยโค้ด หัวข้อปิดถูกตัดจากทั้งตัวเศษและตัวหาร
-- AI ต้องส่ง rubric id ครบ ไม่ซ้ำ และตรงกับหัวข้อที่เปิด มิฉะนั้นระบบ retry JSON เพียง 1 ครั้ง
-- คำขอ Gemini ที่ล้มเหลวชั่วคราวจะ retry แบบ exponential backoff ไม่เกิน 3 attempts และ fallback ทั้งงานไป `gemini-3.5-flash-lite` เมื่อโมเดลหลักติดโควตาหรือไม่พร้อม
-- ตรวจ schema ของผลตอบกลับซ้ำใน browser ก่อนแสดง ป้องกันผลไม่ครบหรือข้อมูลผิดรูปแบบ
-- สรุป “สิ่งที่ควรแก้ก่อนส่ง” จากหัวข้อคะแนนต่ำและน้ำหนักสูง พร้อมคัดลอกหรือดาวน์โหลดผลเป็นไฟล์ข้อความ
-- มี progress โดยประมาณ, ป้องกันกดซ้ำ, timeout 2 นาที, cancel และ retry ด้วย idempotency key เดิม
-- ร่างถูกเก็บเฉพาะ `sessionStorage` ของแท็บและมีคำเตือนก่อนออกจากหน้า ไม่มีการเก็บรายงานต้นฉบับบนเซิร์ฟเวอร์
-
-## Worker local
-
-ตั้ง secret สำหรับ Worker local/remote ผ่าน Wrangler และห้าม commit ค่า secret:
+### Worker development
 
 ```bash
 npx wrangler secret put GEMINI_API_KEY
+npm run worker:dev
 ```
 
-ใช้ mock Worker ได้โดยตั้ง `MOCK_ANALYSIS=true` ห้ามใส่ Gemini key ในตัวแปรชื่อ `VITE_*`
+ห้ามใส่ Gemini key ใน `VITE_*`, `.env`, source code หรือ commit history ดูแนวทางเพิ่มเติมใน [SECURITY.md](SECURITY.md)
 
-## Production ที่มีอยู่
+## Deployment
 
-- Pages: https://reportcheckxd.pages.dev
-- Worker: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
-- Model config: `gemini-3.6-flash` และ fallback `gemini-3.5-flash-lite`
+Build static assets แล้ว deploy ไป Cloudflare Pages:
 
-Production ใช้ Cloudflare Pages และ Worker จริง โดย production build จะชี้ Worker สาธารณะอัตโนมัติ ส่วน local development จะใช้ mock เป็นค่าเริ่มต้น หลังแก้ binding/config ต้องรัน `npm run worker:types` และ `npm run worker:check` ก่อน deploy
+```bash
+npm run build
+npx wrangler pages deploy dist --project-name reportcheckxd --branch main
+```
 
-## ความเป็นส่วนตัวและความปลอดภัย
+Worker ใช้ `wrangler.jsonc` เป็น source of truth สำหรับ model, KV binding และ non-secret variables ส่วน `GEMINI_API_KEY` ต้องเก็บใน Worker Secret เท่านั้น
 
-เนื้อหารายงานหลักถูกส่งไป Google Gemini ผ่าน Cloudflare Worker เมื่อผู้ใช้ยืนยันเท่านั้น Worker ไม่ log เนื้อหารายงาน ไฟล์ไม่ถูกอัปโหลด และผลสำเร็จอาจอยู่ใน KV ไม่เกิน 10 นาทีเพื่อป้องกันคำขอซ้ำ ดูรายละเอียดใน [SECURITY.md](SECURITY.md)
+## Repository map
+
+```text
+src/                 React app, UI state และ domain logic
+worker/              Cloudflare Worker API และ server-side validation
+e2e/                 Playwright flows บน desktop/mobile/browser engines
+public/              static assets, headers, sitemap และ social preview
+.testsprite/         project config, 10 plans และ custom mobile test code
+docs/                architecture, current test report และ archived notes
+.github/workflows/   CI quality gate
+```
+
+## Security and privacy
+
+- API key อยู่ใน Cloudflare Worker Secret ไม่ใช่ browser bundle
+- Worker รับ JSON เท่านั้น ตรวจ request size และ schema ก่อนประมวลผล
+- ไม่ log เนื้อหารายงานโดยเจตนา และไม่เก็บไฟล์ต้นฉบับถาวร
+- session draft เก็บเฉพาะใน `sessionStorage` ของแท็บ
+- KV ใช้สำหรับ rate-limit/idempotency และผลสำเร็จอายุสั้นเท่านั้น
+- ระบบเตือนผู้ใช้ว่า AI อาจคลาดเคลื่อนและต้องตรวจเทียบกับต้นฉบับ
+
+อ่านรายละเอียดได้ที่ [SECURITY.md](SECURITY.md)
+
+## Portfolio talking points
+
+ใช้ bullet เหล่านี้อธิบายโปรเจกต์ในการสมัครงานได้:
+
+- Built a production-deployed AI report review workflow with React, TypeScript, Cloudflare Workers and Gemini.
+- Designed schema-first AI integration with Zod validation, retry/fallback handling and code-owned score calculation.
+- Implemented robust document UX for Thai text, PDF text layers, appendix confirmation and configurable rubrics.
+- Established a quality pipeline with 49 unit tests, 28 cross-browser E2E tests and 10 production TestSprite scenarios.
+- Kept secrets server-side and documented rate limits, idempotency, privacy boundaries and deployment operations.
+
+## Project status
+
+This is a portfolio/MVP project. AI output is advisory and does not certify academic correctness, plagiarism status, or compliance with a course rubric.
