@@ -140,6 +140,21 @@ describe('App', () => {
     expect(screen.queryByRole('region', { name: 'ผลวิเคราะห์' })).not.toBeInTheDocument()
   })
 
+  it('shows an exhausted daily quota clearly without an ineffective retry button', async () => {
+    vi.stubEnv('VITE_USE_MOCK_ANALYSIS', 'false')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'โควตารายวันของ Gemini ทั้งโมเดลหลักและโมเดลสำรองครบแล้ว โปรดลองใหม่หลังโควตารีเซ็ตหรือให้ผู้ดูแลเปิด Billing',
+      code: 'GEMINI_DAILY_QUOTA', retryable: false,
+    }), { status: 429, headers: { 'content-type': 'application/json' } })))
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ เนื้อหารายงานสำหรับทดสอบข้อความโควตารายวันที่ครบแล้วจากระบบ Gemini')
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+
+    expect(await screen.findByText(/โควตารายวันของ Gemini ทั้งโมเดลหลักและโมเดลสำรองครบแล้ว/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'ลองอีกครั้งด้วยคำขอเดิม' })).not.toBeInTheDocument()
+  })
+
   it('uses a new idempotency key when the user explicitly starts a fresh analysis', async () => {
     vi.stubEnv('VITE_USE_MOCK_ANALYSIS', 'false')
     const template = cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID)

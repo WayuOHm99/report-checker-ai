@@ -7,7 +7,7 @@
 - Frontend: React, TypeScript, Vite, Tailwind CSS, shadcn/ui
 - PDF: PDF.js (อ่าน text layer เท่านั้น ไม่มี OCR)
 - API: Cloudflare Worker `POST /api/analyze`
-- AI: Gemini ผ่าน `@google/genai`; API key อยู่ใน Worker Secret เท่านั้น
+- AI: Gemini ผ่าน `@google/genai`; ใช้ 3.6 Flash เป็นหลักและ 3.5 Flash-Lite เป็นโมเดลสำรองอัตโนมัติ โดย API key อยู่ใน Worker Secret เท่านั้น
 - Validation: Zod
 - Rate limit/idempotency: Cloudflare KV
 - Tests: Vitest, React Testing Library และ Playwright
@@ -48,6 +48,7 @@ E2E รันบน Chromium desktop, Chrome mobile, Firefox และ WebKit �
 - ผู้ใช้เลือกเทมเพลต เพิ่ม/ลบ/ปิดหัวข้อ แก้เกณฑ์และน้ำหนักได้ โดยค่าขั้นสูงถูกพับไว้ตามค่าเริ่มต้น
 - คะแนนรวมคำนวณด้วยโค้ด หัวข้อปิดถูกตัดจากทั้งตัวเศษและตัวหาร
 - AI ต้องส่ง rubric id ครบ ไม่ซ้ำ และตรงกับหัวข้อที่เปิด มิฉะนั้นระบบ retry JSON เพียง 1 ครั้ง
+- คำขอ Gemini ที่ล้มเหลวชั่วคราวจะ retry แบบ exponential backoff ไม่เกิน 3 attempts และ fallback ทั้งงานไป `gemini-3.5-flash-lite` เมื่อโมเดลหลักติดโควตาหรือไม่พร้อม
 - ตรวจ schema ของผลตอบกลับซ้ำใน browser ก่อนแสดง ป้องกันผลไม่ครบหรือข้อมูลผิดรูปแบบ
 - สรุป “สิ่งที่ควรแก้ก่อนส่ง” จากหัวข้อคะแนนต่ำและน้ำหนักสูง พร้อมคัดลอกหรือดาวน์โหลดผลเป็นไฟล์ข้อความ
 - มี progress โดยประมาณ, ป้องกันกดซ้ำ, timeout 2 นาที, cancel และ retry ด้วย idempotency key เดิม
@@ -67,7 +68,7 @@ npx wrangler secret put GEMINI_API_KEY
 
 - Pages: https://reportcheckxd.pages.dev
 - Worker: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
-- Model config: `gemini-3.6-flash`
+- Model config: `gemini-3.6-flash` และ fallback `gemini-3.5-flash-lite`
 
 Production ใช้ Cloudflare Pages และ Worker จริง โดย production build จะชี้ Worker สาธารณะอัตโนมัติ ส่วน local development จะใช้ mock เป็นค่าเริ่มต้น หลังแก้ binding/config ต้องรัน `npm run worker:types` และ `npm run worker:check` ก่อน deploy
 

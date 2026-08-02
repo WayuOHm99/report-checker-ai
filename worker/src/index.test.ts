@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const sdkMocks = vi.hoisted(() => ({
   countTokens: vi.fn(),
   generateContent: vi.fn(),
+  clientOptions: [] as unknown[],
 }))
 
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
+    constructor(options: unknown) { sdkMocks.clientOptions.push(options) }
     models = { countTokens: sdkMocks.countTokens, generateContent: sdkMocks.generateContent }
   },
 }))
@@ -29,6 +31,7 @@ describe('POST /api/analyze', () => {
   beforeEach(() => {
     sdkMocks.countTokens.mockReset()
     sdkMocks.generateContent.mockReset()
+    sdkMocks.clientOptions.length = 0
   })
 
   it('returns a mock response and calculates the score in code', async () => {
@@ -55,7 +58,7 @@ describe('POST /api/analyze', () => {
       GEMINI_API_KEY: 'configured-secret', GEMINI_MODEL: 'test-model', MOCK_ANALYSIS: 'false', RATE_LIMIT: new MemoryKv(),
     })
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ status: 'ok', aiConfigured: true, rateLimitConfigured: true, model: 'test-model' })
+    expect(await response.json()).toEqual({ status: 'ok', aiConfigured: true, rateLimitConfigured: true, model: 'test-model', fallbackModel: 'gemini-3.5-flash-lite' })
   })
 
   it('returns method not allowed for a GET request to the analysis endpoint', async () => {
@@ -147,6 +150,51 @@ describe('POST /api/analyze', () => {
     })
     expect(response.status).toBe(502)
     expect((await response.json() as { code: string }).code).toBe('INVALID_AI_RESPONSE')
+    expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries transient SDK failures and falls back to Flash-Lite for the whole analysis', async () => {
+    const validResponse = {
+      sections: [{ id: 'introduction', score: 2, reason: 'พบเนื้อหา', evidence: ['บทนำ'], missing: [], recommendation: 'เพิ่มรายละเอียด', confidence: 0.8 }],
+      qualityWarnings: [], consistencyNotes: [], referenceComment: 'โปรดยืนยัน',
+    }
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent.mockImplementation(({ model }: { model: string }) => {
+      if (model === 'primary-model') return Promise.reject(new Error('429 RESOURCE_EXHAUSTED GenerateRequestsPerDayPerProjectPerModel-FreeTier'))
+      return Promise.resolve({ text: JSON.stringify(validResponse) })
+    })
+
+    const response = await worker.fetch(new Request('https://local.test/api/analyze', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': 'gemini-fallback-success-key' }, body: JSON.stringify(body),
+    }), {
+      GEMINI_API_KEY: 'test-key-not-a-real-secret', GEMINI_MODEL: 'primary-model', GEMINI_FALLBACK_MODEL: 'fallback-model', MOCK_ANALYSIS: 'false',
+      DAILY_BUDGET_LIMIT: '100', DAILY_TOKEN_BUDGET: '100000', RATE_LIMIT: new MemoryKv(),
+    })
+
+    const result = await response.json() as { model: string; qualityWarnings: string[] }
+    expect(response.status).toBe(200)
+    expect(result.model).toBe('fallback-model')
+    expect(result.qualityWarnings[0]).toContain('ระบบใช้โมเดลสำรอง fallback-model')
+    expect(sdkMocks.generateContent.mock.calls.map(([request]) => request.model)).toEqual(['primary-model', 'fallback-model'])
+    expect(sdkMocks.clientOptions[0]).toMatchObject({ httpOptions: { retryOptions: { attempts: 3, httpStatusCodes: [408, 429, 500, 502, 503, 504] } } })
+  })
+
+  it('explains when the daily quota is exhausted on both models without offering an immediate retry', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent.mockRejectedValue(new Error('429 RESOURCE_EXHAUSTED GenerateRequestsPerDayPerProjectPerModel-FreeTier'))
+
+    const response = await worker.fetch(new Request('https://local.test/api/analyze', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': 'gemini-fallback-exhausted-key' }, body: JSON.stringify(body),
+    }), {
+      GEMINI_API_KEY: 'test-key-not-a-real-secret', GEMINI_MODEL: 'primary-model', GEMINI_FALLBACK_MODEL: 'fallback-model', MOCK_ANALYSIS: 'false',
+      DAILY_BUDGET_LIMIT: '100', DAILY_TOKEN_BUDGET: '100000', RATE_LIMIT: new MemoryKv(),
+    })
+
+    const result = await response.json() as { code: string; error: string; retryable: boolean }
+    expect(response.status).toBe(429)
+    expect(result.code).toBe('GEMINI_DAILY_QUOTA')
+    expect(result.error).toContain('ทั้งโมเดลหลักและโมเดลสำรอง')
+    expect(result.retryable).toBe(false)
     expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
   })
 })

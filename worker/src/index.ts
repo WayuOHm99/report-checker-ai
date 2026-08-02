@@ -10,11 +10,14 @@ const RATE_LIMIT_PER_HOUR = 10
 const IDEMPOTENCY_TTL_SECONDS = 10 * 60
 const SINGLE_CALL_TOKEN_LIMIT = 110_000
 const DEFAULT_DAILY_TOKEN_BUDGET = 2_000_000
+const DEFAULT_PRIMARY_MODEL = 'gemini-3.6-flash'
+const DEFAULT_FALLBACK_MODEL = 'gemini-3.5-flash-lite'
+const GEMINI_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504]
 
 type RateLimitStore = Pick<KVNamespace, 'get' | 'put'>
 
 export type AnalysisEnv = Partial<Pick<Env,
-  'GEMINI_API_KEY' | 'GEMINI_MODEL' | 'MAX_CHARS' | 'MOCK_ANALYSIS' | 'DAILY_BUDGET_LIMIT' |
+  'GEMINI_API_KEY' | 'GEMINI_MODEL' | 'GEMINI_FALLBACK_MODEL' | 'MAX_CHARS' | 'MOCK_ANALYSIS' | 'DAILY_BUDGET_LIMIT' |
   'DAILY_TOKEN_BUDGET' | 'ALLOWED_ORIGIN'>> & { RATE_LIMIT?: RateLimitStore }
 
 const rubricSectionSchema = z.object({
@@ -228,11 +231,30 @@ function mergeChunkResponses(responses: ModelResponse[], activeSections: ActiveS
 }
 
 function mapGeminiError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : ''
-  if (message.includes('429') || message.includes('quota') || message.includes('resource_exhausted')) return new ApiFailure('GEMINI_QUOTA', 'โควตา Gemini เต็มชั่วคราว โปรดลองใหม่ภายหลัง', 429, true)
-  if (message.includes('401') || message.includes('403') || message.includes('api key')) return new ApiFailure('AI_CONFIGURATION', 'ระบบ AI ยังตั้งค่าไม่สมบูรณ์ กรุณาแจ้งผู้ดูแลระบบ', 503)
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
+  const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined
+  const isQuota = status === 429 || message.includes('429') || message.includes('quota') || message.includes('resource_exhausted')
+  if (isQuota) {
+    const isDaily = message.includes('perday') || message.includes('per day') || message.includes('daily') || message.includes('rpd') || message.includes('requestsperday')
+    return isDaily
+      ? new ApiFailure('GEMINI_DAILY_QUOTA', 'โควตารายวันของ Gemini ครบแล้ว ระบบจะลองโมเดลสำรองให้อัตโนมัติ', 429)
+      : new ApiFailure('GEMINI_RATE_LIMIT', 'Gemini กำลังมีคำขอหนาแน่น ระบบจะลองใหม่และสลับโมเดลให้อัตโนมัติ', 429, true)
+  }
+  if (status === 401 || status === 403 || message.includes('401') || message.includes('403') || message.includes('api key')) return new ApiFailure('AI_CONFIGURATION', 'ระบบ AI ยังตั้งค่าไม่สมบูรณ์ กรุณาแจ้งผู้ดูแลระบบ', 503)
   if (message.includes('model') && (message.includes('not found') || message.includes('invalid'))) return new ApiFailure('MODEL_UNAVAILABLE', 'โมเดล AI ที่ตั้งค่าไว้ยังไม่พร้อมใช้งาน กรุณาแจ้งผู้ดูแลระบบ', 503)
+  if (status === 408 || (status !== undefined && status >= 500)) return new ApiFailure('GEMINI_UNAVAILABLE', 'Gemini ยังไม่พร้อมตอบกลับในขณะนี้ ระบบจะลองโมเดลสำรองให้อัตโนมัติ', 502, true)
   return new ApiFailure('GEMINI_UNAVAILABLE', 'ยังเชื่อมต่อ Gemini ไม่ได้ในขณะนี้ โปรดลองใหม่ภายหลัง', 502, true)
+}
+
+function canUseFallback(error: unknown): error is ApiFailure {
+  return error instanceof ApiFailure && ['GEMINI_DAILY_QUOTA', 'GEMINI_RATE_LIMIT', 'GEMINI_UNAVAILABLE', 'MODEL_UNAVAILABLE'].includes(error.code)
+}
+
+function exhaustedGeminiFailure(error: unknown) {
+  const failure = error instanceof ApiFailure ? error : mapGeminiError(error)
+  if (failure.code === 'GEMINI_DAILY_QUOTA') return new ApiFailure('GEMINI_DAILY_QUOTA', 'โควตารายวันของ Gemini ทั้งโมเดลหลักและโมเดลสำรองครบแล้ว โปรดลองใหม่หลังโควตารีเซ็ตหรือให้ผู้ดูแลเปิด Billing', 429)
+  if (failure.code === 'GEMINI_RATE_LIMIT') return new ApiFailure('GEMINI_RATE_LIMIT', 'Gemini มีคำขอหนาแน่นทั้งโมเดลหลักและโมเดลสำรอง โปรดลองใหม่ในอีก 1–2 นาที', 429, true)
+  return failure
 }
 
 async function generateValidated(ai: GoogleGenAI, model: string, prompt: string, activeSections: ActiveSection[]) {
@@ -252,10 +274,7 @@ async function generateValidated(ai: GoogleGenAI, model: string, prompt: string,
   }
 }
 
-async function analyzeWithGemini(reportText: string, referenceSummary: unknown, activeSections: ActiveSection[], env: AnalysisEnv) {
-  if (!env.GEMINI_API_KEY) throw new ApiFailure('AI_CONFIGURATION', 'ระบบยังไม่ได้ตั้งค่า Gemini API key กรุณาแจ้งผู้ดูแลระบบ', 503)
-  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY })
-  const model = env.GEMINI_MODEL ?? 'gemini-3.6-flash'
+async function prepareModelPlan(ai: GoogleGenAI, model: string, reportText: string, referenceSummary: unknown, activeSections: ActiveSection[]) {
   const fullPrompt = buildAnalysisContents({ reportText, referenceSummary }, activeSections)
   let fullTokenCount: number
   try {
@@ -278,17 +297,72 @@ async function analyzeWithGemini(reportText: string, referenceSummary: unknown, 
   }
   if (prompts.length > 10 || plannedInputTokens > 1_000_000) throw new ApiFailure('DOCUMENT_TOKEN_LIMIT', 'เอกสารมี token มากเกินขนาดที่ระบบแบ่งวิเคราะห์ได้ โปรดลดเนื้อหาแล้วลองใหม่', 413)
 
+  return { model, plannedInputTokens, prompts }
+}
+
+async function generateModelPlan(ai: GoogleGenAI, plan: Awaited<ReturnType<typeof prepareModelPlan>>, activeSections: ActiveSection[]) {
+  const responses: ModelResponse[] = []
+  for (const prompt of plan.prompts) responses.push(await generateValidated(ai, plan.model, prompt, activeSections))
+  return mergeChunkResponses(responses, activeSections)
+}
+
+async function analyzeWithGemini(reportText: string, referenceSummary: unknown, activeSections: ActiveSection[], env: AnalysisEnv) {
+  if (!env.GEMINI_API_KEY) throw new ApiFailure('AI_CONFIGURATION', 'ระบบยังไม่ได้ตั้งค่า Gemini API key กรุณาแจ้งผู้ดูแลระบบ', 503)
+  const ai = new GoogleGenAI({
+    apiKey: env.GEMINI_API_KEY,
+    httpOptions: {
+      retryOptions: { attempts: 3, initialDelay: 1, maxDelay: 4, expBase: 2, jitter: 0.5, httpStatusCodes: GEMINI_RETRYABLE_STATUS_CODES },
+    },
+  })
+  const primaryModel = env.GEMINI_MODEL?.trim() || DEFAULT_PRIMARY_MODEL
+  const configuredFallback = env.GEMINI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL
+  const fallbackModel = configuredFallback === primaryModel ? undefined : configuredFallback
+  let fallbackReason: ApiFailure | undefined
+  let plan: Awaited<ReturnType<typeof prepareModelPlan>>
+  try {
+    plan = await prepareModelPlan(ai, primaryModel, reportText, referenceSummary, activeSections)
+  } catch (error) {
+    if (!fallbackModel || !canUseFallback(error)) throw error
+    fallbackReason = error
+    try {
+      plan = await prepareModelPlan(ai, fallbackModel, reportText, referenceSummary, activeSections)
+    } catch (fallbackError) {
+      throw canUseFallback(fallbackError) ? exhaustedGeminiFailure(fallbackError) : fallbackError
+    }
+  }
+
   const dailyRequestLimit = Number(env.DAILY_BUDGET_LIMIT ?? '100')
   const dailyTokenLimit = Number(env.DAILY_TOKEN_BUDGET ?? String(DEFAULT_DAILY_TOKEN_BUDGET))
   const date = new Date().toISOString().slice(0, 10)
   if (env.RATE_LIMIT) {
-    if (await incrementCounter(env.RATE_LIMIT, `budget:requests:${date}`, Number.isFinite(dailyRequestLimit) ? dailyRequestLimit : 100, 1, 60 * 60 * 36)) throw new ApiFailure('DAILY_REQUEST_BUDGET', 'จำนวนการตรวจของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429, true)
-    if (await incrementCounter(env.RATE_LIMIT, `budget:tokens:${date}`, Number.isFinite(dailyTokenLimit) ? dailyTokenLimit : DEFAULT_DAILY_TOKEN_BUDGET, plannedInputTokens * 2, 60 * 60 * 36)) throw new ApiFailure('DAILY_TOKEN_BUDGET', 'งบประมาณ token ของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429, true)
+    if (await incrementCounter(env.RATE_LIMIT, `budget:requests:${date}`, Number.isFinite(dailyRequestLimit) ? dailyRequestLimit : 100, 1, 60 * 60 * 36)) throw new ApiFailure('DAILY_REQUEST_BUDGET', 'จำนวนการตรวจของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429)
+    if (await incrementCounter(env.RATE_LIMIT, `budget:tokens:${date}`, Number.isFinite(dailyTokenLimit) ? dailyTokenLimit : DEFAULT_DAILY_TOKEN_BUDGET, plan.plannedInputTokens * 2, 60 * 60 * 36)) throw new ApiFailure('DAILY_TOKEN_BUDGET', 'งบประมาณ token ของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429)
   }
 
-  const responses: ModelResponse[] = []
-  for (const prompt of prompts) responses.push(await generateValidated(ai, model, prompt, activeSections))
-  return { response: mergeChunkResponses(responses, activeSections), model }
+  let response: ModelResponse
+  try {
+    response = await generateModelPlan(ai, plan, activeSections)
+  } catch (error) {
+    if (!fallbackModel || plan.model === fallbackModel || !canUseFallback(error)) throw plan.model === fallbackModel && canUseFallback(error) ? exhaustedGeminiFailure(error) : error
+    fallbackReason = error
+    let fallbackPlan: Awaited<ReturnType<typeof prepareModelPlan>>
+    try {
+      fallbackPlan = await prepareModelPlan(ai, fallbackModel, reportText, referenceSummary, activeSections)
+      response = await generateModelPlan(ai, fallbackPlan, activeSections)
+      plan = fallbackPlan
+    } catch (fallbackError) {
+      throw canUseFallback(fallbackError) ? exhaustedGeminiFailure(fallbackError) : fallbackError
+    }
+  }
+
+  if (fallbackReason) {
+    console.warn(JSON.stringify({ event: 'gemini_model_fallback', primaryModel, fallbackModel: plan.model, reason: fallbackReason.code }))
+    response = {
+      ...response,
+      qualityWarnings: uniqueLimited([`ระบบใช้โมเดลสำรอง ${plan.model} เนื่องจากโมเดลหลักไม่พร้อมหรือโควตาเต็ม โปรดยืนยันประเด็นสำคัญกับต้นฉบับ`, ...response.qualityWarnings], 5),
+    }
+  }
+  return { response, model: plan.model }
 }
 
 export async function handleAnalyze(request: Request, env: AnalysisEnv) {
@@ -345,7 +419,7 @@ export default {
       if (request.method === 'OPTIONS' && url.pathname === '/api/analyze') response = new Response(null, { status: 204, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else if (request.method === 'GET' && url.pathname === '/api/health') {
         const ready = Boolean(env.GEMINI_API_KEY && env.RATE_LIMIT && env.MOCK_ANALYSIS !== 'true')
-        response = json({ status: ready ? 'ok' : 'degraded', aiConfigured: Boolean(env.GEMINI_API_KEY), rateLimitConfigured: Boolean(env.RATE_LIMIT), model: env.GEMINI_MODEL ?? 'gemini-3.6-flash' }, ready ? 200 : 503)
+        response = json({ status: ready ? 'ok' : 'degraded', aiConfigured: Boolean(env.GEMINI_API_KEY), rateLimitConfigured: Boolean(env.RATE_LIMIT), model: env.GEMINI_MODEL ?? DEFAULT_PRIMARY_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL ?? DEFAULT_FALLBACK_MODEL }, ready ? 200 : 503)
       } else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
       else if (url.pathname === '/api/analyze') response = new Response(JSON.stringify({ error: 'endpoint นี้รองรับเฉพาะ POST', code: 'METHOD_NOT_ALLOWED', retryable: false }), { status: 405, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else response = errorResponse(new ApiFailure('NOT_FOUND', 'ไม่พบ endpoint ที่เรียกใช้', 404))
