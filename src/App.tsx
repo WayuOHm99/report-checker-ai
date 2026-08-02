@@ -11,13 +11,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
-import { analysisResultSchema, createMockAnalysis, formatAnalysisResult, type AnalysisResult } from './lib/analysis'
-import { isLikelyPdf, MAX_ANALYSIS_CHARS, MAX_RAW_CHARS, prepareDocument } from './lib/document'
+import { API_VERSION, API_VERSION_HEADER } from '../shared/api-contract'
+import { createMockAnalysis, formatAnalysisResult, formatOverallScore, isNotApplicable, NOT_APPLICABLE_BADGE, parseAnalysisResponse, type AnalysisResult } from './lib/analysis'
+import { isLikelyPdf, MAX_ANALYSIS_CHARS, MAX_FILE_BYTES, MAX_RAW_CHARS, PDF_LIMITS_LABEL, prepareDocument } from './lib/document'
 import { extractPdfText } from './lib/pdf'
 import { analyzeReferences } from './lib/references'
-import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, rubricSchema, rubricSectionSchema, rubricTemplates, type RubricSection } from './lib/rubric'
+import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, getDefaultRubricTemplate, getRubricTemplatesForDocumentType, inferDocumentTypeFromTemplate, rubricSchema, rubricSectionSchema, rubricTemplates, type RubricSection } from './lib/rubric'
+import { DOCUMENT_TYPES, documentTypeDefinitions, getDocumentTypeDefinition, type DocumentType } from '../shared/document-types'
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024
 const DRAFT_KEY = 'report-checker-session-draft-v1'
 const PRODUCTION_API_BASE_URL = 'https://report-checker-ai-api.oomzazato01.workers.dev/api'
 
@@ -42,6 +43,7 @@ type SourceForm = z.infer<typeof sourceSchema>
 
 const draftSchema = z.object({
   reportText: z.string().max(MAX_RAW_CHARS),
+  documentType: z.enum(DOCUMENT_TYPES).optional(),
   templateId: z.string(),
   rubric: z.array(rubricSectionSchema),
 })
@@ -50,16 +52,21 @@ const apiErrorSchema = z.object({
   code: z.string().optional(),
   retryable: z.boolean().optional(),
 })
-type Draft = z.infer<typeof draftSchema>
+type Draft = {
+  reportText: string
+  documentType: DocumentType
+  templateId: string
+  rubric: RubricSection[]
+}
 
 export type AnalysisState = 'idle' | 'input' | 'preview' | 'editing' | 'ready' | 'analyzing' | 'result' | 'error'
 
 const stateLabels: Record<AnalysisState, string> = {
-  idle: 'พร้อมเริ่ม', input: 'กำลังเตรียมรายงาน', preview: 'กำลังตรวจตัวอย่าง', editing: 'กำลังแก้ไข',
+  idle: 'พร้อมเริ่ม', input: 'กำลังเตรียมเอกสาร', preview: 'กำลังตรวจตัวอย่าง', editing: 'กำลังแก้ไข',
   ready: 'พร้อมส่งตรวจ', analyzing: 'AI กำลังตรวจ', result: 'ตรวจเสร็จแล้ว', error: 'ต้องตรวจข้อมูลอีกครั้ง',
 }
 
-const analysisSteps = ['ตรวจขนาดเอกสาร', 'เตรียมเกณฑ์การตรวจ', 'ส่งข้อมูลผ่านระบบที่ปลอดภัย', 'AI อ่านรายงาน', 'ตรวจความครบถ้วนของคำตอบ', 'รวมผลแต่ละหัวข้อ', 'คำนวณคะแนนรวม']
+const analysisSteps = ['ตรวจขนาดเอกสาร', 'เตรียมเกณฑ์การตรวจ', 'ส่งข้อมูลผ่านระบบที่ปลอดภัย', 'AI อ่านเอกสาร', 'ตรวจความครบถ้วนของคำตอบ', 'รวมผลแต่ละหัวข้อ', 'คำนวณคะแนนรวม']
 
 function getAnonymousToken() {
   const key = 'report-checker-anonymous-token'
@@ -87,11 +94,25 @@ function loadDraft(): Draft {
   try {
     const saved = window.sessionStorage.getItem(DRAFT_KEY)
     const parsed = draftSchema.safeParse(saved ? JSON.parse(saved) : null)
-    if (parsed.success) return parsed.data
+    if (parsed.success) {
+      const savedTemplate = rubricTemplates.find((template) => template.id === parsed.data.templateId)
+      const documentType = savedTemplate?.documentType
+        ?? parsed.data.documentType
+        ?? inferDocumentTypeFromTemplate(parsed.data.templateId)
+      const replacementTemplate = getDefaultRubricTemplate(documentType)
+      return {
+        ...parsed.data,
+        documentType,
+        templateId: savedTemplate?.id ?? replacementTemplate.id,
+        // Preserve edits only while their source template still exists. A
+        // retired/unknown template cannot safely lend its rubric to a new id.
+        rubric: savedTemplate ? parsed.data.rubric : replacementTemplate.sections.map((section) => ({ ...section })),
+      }
+    }
   } catch {
     removeStoredDraft()
   }
-  return { reportText: '', templateId: fallback.id, rubric: fallback.sections }
+  return { reportText: '', documentType: fallback.documentType, templateId: fallback.id, rubric: fallback.sections }
 }
 
 function App() {
@@ -108,6 +129,7 @@ function App() {
   const [analysisCanRetry, setAnalysisCanRetry] = useState(false)
   const [resultActionMessage, setResultActionMessage] = useState<string | null>(null)
   const [anonymousToken] = useState(getAnonymousToken)
+  const [documentType, setDocumentType] = useState<DocumentType>(initialDraft.documentType)
   const [templateId, setTemplateId] = useState(initialDraft.templateId)
   const [rubric, setRubric] = useState<RubricSection[]>(initialDraft.rubric)
   const [showAdvancedRubric, setShowAdvancedRubric] = useState(false)
@@ -134,6 +156,8 @@ function App() {
   const preparedDocument = useMemo(() => prepareDocument(text), [text])
   const referenceSummary = useMemo(() => analyzeReferences(preparedDocument.mainText), [preparedDocument.mainText])
   const rubricValidation = rubricSchema.safeParse({ version: 'rubric-editor-v1', sections: rubric })
+  const documentTypeDefinition = getDocumentTypeDefinition(documentType)
+  const availableRubricTemplates = getRubricTemplatesForDocumentType(documentType)
   const enabledWeight = rubric.filter((section) => section.enabled).reduce((total, section) => total + section.weight, 0)
   const exceedsRawLimit = text.length > MAX_RAW_CHARS
   const exceedsAnalysisLimit = preparedDocument.mainText.length > MAX_ANALYSIS_CHARS
@@ -142,7 +166,8 @@ function App() {
   const canAnalyze = Boolean(preparedDocument.mainText.trim()) && !exceedsRawLimit && !exceedsAnalysisLimit && !controlsLocked && state !== 'result' && rubricValidation.success
   const priorityItems = useMemo(() => {
     if (!result) return []
-    return [...result.sections]
+    // Sections that do not apply to this kind of work carry no gap to fix.
+    return result.sections.filter((section) => !isNotApplicable(section))
       .sort((left, right) => left.score - right.score || right.weight - left.weight)
       .flatMap((section) => section.missing.map((missing) => ({ section: section.title, missing, recommendation: section.recommendation })))
       .slice(0, 6)
@@ -158,10 +183,10 @@ function App() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       if (!text.trim()) removeStoredDraft()
-      else saveDraft({ reportText: text, templateId, rubric })
+      else saveDraft({ reportText: text, documentType, templateId, rubric })
     }, 300)
     return () => window.clearTimeout(timer)
-  }, [text, templateId, rubric])
+  }, [text, documentType, templateId, rubric])
 
   useEffect(() => {
     const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
@@ -222,7 +247,7 @@ function App() {
     }
     if (file.size > MAX_FILE_BYTES) {
       setFileName(null)
-      setFileNotice('ไฟล์มีขนาดเกิน 10 MB ระบบจึงยังไม่ได้อ่านหรือส่งไฟล์นี้')
+      setFileNotice(`ไฟล์มีขนาดเกิน ${MAX_FILE_BYTES / (1024 * 1024)} MB ระบบจึงยังไม่ได้อ่านหรือส่งไฟล์นี้`)
       setState('error')
       event.target.value = ''
       return
@@ -245,7 +270,7 @@ function App() {
       })
       setValue('reportText', extraction.text, { shouldDirty: true, shouldValidate: true })
       setWarnings(extraction.warnings)
-      setFileNotice(`อ่าน PDF ครบ ${extraction.pageCount} หน้าแล้ว ตรวจแก้ข้อความในกล่องด้านบนได้ก่อนกดตรวจรายงาน`)
+      setFileNotice(`อ่าน PDF ครบ ${extraction.pageCount} หน้าแล้ว ตรวจแก้ข้อความในกล่องด้านบนได้ก่อนกดตรวจเอกสาร`)
       setAppendixConfirmed(false)
       setState(extraction.text.trim() && extraction.text.length <= MAX_RAW_CHARS ? 'input' : 'error')
     } catch (error) {
@@ -271,7 +296,7 @@ function App() {
     const valid = await trigger('reportText')
     if (!valid || !preparedDocument.mainText.trim() || exceedsAnalysisLimit || exceedsRawLimit) {
       setState('error')
-      setAnalysisMessage(!preparedDocument.mainText.trim() ? 'กรุณาเพิ่มเนื้อหารายงานหลักก่อนเริ่มตรวจ' : 'เนื้อหารายงานยังยาวเกินขนาดที่รองรับ ระบบยังไม่ได้ตัดหรือส่งข้อความส่วนใด')
+      setAnalysisMessage(!preparedDocument.mainText.trim() ? 'กรุณาเพิ่มเนื้อหาเอกสารหลักก่อนเริ่มตรวจ' : 'เนื้อหาเอกสารยังยาวเกินขนาดที่รองรับ ระบบยังไม่ได้ตัดหรือส่งข้อความส่วนใด')
       setAnalysisCanRetry(false)
       analysisInFlightRef.current = false
       return
@@ -318,15 +343,16 @@ function App() {
           const timer = window.setTimeout(resolve, 600)
           controller.signal.addEventListener('abort', () => { window.clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')) }, { once: true })
         })
-        setResult(createMockAnalysis(rubric, referenceSummary, rubricVersion))
+        setResult(createMockAnalysis(rubric, referenceSummary, rubricVersion, documentType))
       } else {
         const baseUrl = getApiBaseUrl()
         idempotencyKeyRef.current ??= crypto.randomUUID()
         const response = await fetch(`${baseUrl}/analyze`, {
           method: 'POST', signal: controller.signal,
-          headers: { 'content-type': 'application/json', 'Idempotency-Key': idempotencyKeyRef.current },
+          headers: { 'content-type': 'application/json', 'Idempotency-Key': idempotencyKeyRef.current, [API_VERSION_HEADER]: String(API_VERSION) },
           body: JSON.stringify({
             reportText: text,
+            documentType,
             anonymousToken,
             rubric: { version: rubricVersion, sections: rubric },
             referenceSummary: referenceSummary.aiSummary,
@@ -338,18 +364,21 @@ function App() {
         try { payload = JSON.parse(rawPayload) as unknown } catch { payload = undefined }
         const parsedError = apiErrorSchema.safeParse(payload)
         if (!response.ok || parsedError.success) {
+          // The stored request no longer matches this key, so retrying with it
+          // would only conflict again. Drop it and let the next attempt mint one.
+          if (parsedError.success && parsedError.data.code === 'IDEMPOTENCY_CONFLICT') idempotencyKeyRef.current = null
           const message = parsedError.success ? parsedError.data.error : 'ระบบตอบกลับในรูปแบบที่อ่านไม่ได้ โปรดลองใหม่ภายหลัง'
           const error = new Error(message) as Error & { retryable?: boolean }
           error.retryable = parsedError.success ? (parsedError.data.retryable ?? response.status >= 500) : response.status >= 500
           throw error
         }
-        const parsedResult = analysisResultSchema.safeParse(payload)
-        if (!parsedResult.success) {
-          const error = new Error('ผลตอบกลับจากระบบยังไม่ครบถ้วน โปรดลองใหม่อีกครั้ง') as Error & { retryable?: boolean }
-          error.retryable = true
+        const parsedResult = parseAnalysisResponse(payload, { documentType, rubricVersion, sections: rubric })
+        if (!parsedResult.ok) {
+          const error = new Error(parsedResult.message) as Error & { retryable?: boolean }
+          error.retryable = parsedResult.retryable
           throw error
         }
-        setResult(parsedResult.data)
+        setResult(parsedResult.result)
       }
       setProgressIndex(analysisSteps.length - 1)
       setState('result')
@@ -383,8 +412,20 @@ function App() {
     const currentTemplate = cloneRubricTemplate(templateId)
     const hasCustomChanges = JSON.stringify(rubric) !== JSON.stringify(currentTemplate.sections)
     if (hasCustomChanges && !window.confirm('การเปลี่ยนเทมเพลตจะแทนที่เกณฑ์ที่แก้ไว้ ต้องการดำเนินการต่อหรือไม่?')) return
+    setDocumentType(nextTemplate.documentType)
     setTemplateId(nextTemplate.id)
     markRubricChanged(nextTemplate.sections)
+  }
+
+  const selectDocumentType = (nextDocumentType: DocumentType) => {
+    if (nextDocumentType === documentType) return
+    const currentTemplate = cloneRubricTemplate(templateId)
+    const hasCustomChanges = JSON.stringify(rubric) !== JSON.stringify(currentTemplate.sections)
+    if (hasCustomChanges && !window.confirm('การเปลี่ยนประเภทงานจะแทนที่เกณฑ์ที่แก้ไว้ ต้องการดำเนินการต่อหรือไม่?')) return
+    const nextTemplate = getDefaultRubricTemplate(nextDocumentType)
+    setDocumentType(nextDocumentType)
+    setTemplateId(nextTemplate.id)
+    markRubricChanged(nextTemplate.sections.map((section) => ({ ...section })))
   }
 
   const updateSection = (id: string, changes: Partial<RubricSection>) => {
@@ -405,6 +446,7 @@ function App() {
     if (text.trim() && !window.confirm('ล้างข้อความและการตั้งค่าทั้งหมดในแท็บนี้หรือไม่?')) return
     const fallback = cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID)
     reset({ reportText: '' })
+    setDocumentType(fallback.documentType)
     setTemplateId(fallback.id)
     setRubric(fallback.sections)
     setState('idle')
@@ -444,7 +486,7 @@ function App() {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `ผลตรวจรายงาน-${new Date().toISOString().slice(0, 10)}.txt`
+    anchor.download = `${getDocumentTypeDefinition(result.documentType).resultTitle}-${new Date().toISOString().slice(0, 10)}.txt`
     anchor.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 0)
     setResultActionMessage('ดาวน์โหลดผลตรวจแล้ว')
@@ -453,7 +495,7 @@ function App() {
   const cancelAppendixConfirmation = () => {
     setAppendixConfirmationOpen(false)
     setState('input')
-    setAnalysisMessage('ยังไม่ได้ส่งรายงาน คุณสามารถแก้ข้อความหรือกดตรวจอีกครั้งได้')
+    setAnalysisMessage('ยังไม่ได้ส่งเอกสาร คุณสามารถแก้ข้อความหรือกดตรวจอีกครั้งได้')
     setAnalysisCanRetry(false)
     window.requestAnimationFrame(() => editorRef.current?.focus())
   }
@@ -501,8 +543,8 @@ function App() {
       <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
         <header className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">ตรวจรายงานด้วย AI</h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ ข้อมูลหรือหลักฐานที่อาจยังขาด และแนวทางปรับปรุง</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">RubricLens AI</h1>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7"><span className="font-medium text-slate-800">ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์</span> — รองรับรายงานทั่วไป โครงงาน และรายงานวิจัย</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="w-fit" aria-live="polite">สถานะ: {stateLabels[state]}</Badge>
@@ -532,28 +574,28 @@ function App() {
 
         <div>
           <Card>
-            <CardHeader><CardTitle>เพิ่มรายงาน</CardTitle><CardDescription>รองรับเนื้อหารายงานหลักไม่เกิน 200,000 ตัวอักษร และ PDF ไม่เกิน 10 MB</CardDescription></CardHeader>
+            <CardHeader><CardTitle>เพิ่มเอกสาร</CardTitle><CardDescription>รองรับเนื้อหาเอกสารหลักไม่เกิน {MAX_ANALYSIS_CHARS.toLocaleString()} ตัวอักษร และไฟล์ PDF {PDF_LIMITS_LABEL}</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium" htmlFor="report-text">ข้อความรายงาน</label>
+                <label className="text-sm font-medium" htmlFor="report-text">ข้อความเอกสาร</label>
                 <Textarea
-                  id="report-text" aria-label="ข้อความรายงาน" className="h-64 resize-none overflow-y-scroll leading-6 sm:h-80"
-                  placeholder="วางเนื้อหารายงานที่นี่…" {...reportTextField}
+                  id="report-text" aria-label="ข้อความเอกสาร" className="h-64 resize-none overflow-y-scroll leading-6 sm:h-80"
+                  placeholder="วางเนื้อหาเอกสารที่นี่…" {...reportTextField}
                   ref={(element) => { reportTextField.ref(element); editorRef.current = element }}
                   onChange={(event) => { reportTextField.onChange(event); markContentChanged(event.target.value) }}
                   disabled={state === 'analyzing' || isExtracting}
                 />
                 <div className="flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:justify-between sm:gap-4">
-                  <span>{errors.reportText?.message ?? 'ร่างถูกเก็บเฉพาะในแท็บนี้ และจะส่งเมื่อคุณกด “ตรวจรายงาน”'}</span>
+                  <span>{errors.reportText?.message ?? `ร่างถูกเก็บเฉพาะในแท็บนี้ และจะส่งเมื่อคุณกด “${documentTypeDefinition.actionLabel}”`}</span>
                   <span className={exceedsRawLimit || exceedsAnalysisLimit ? 'font-medium text-red-700' : ''}>{text.length.toLocaleString()} ตัวอักษรทั้งหมด · {preparedDocument.mainText.length.toLocaleString()} ตัวอักษรที่จะวิเคราะห์</span>
                 </div>
               </div>
 
-              {(exceedsRawLimit || exceedsAnalysisLimit) && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>เอกสารยังยาวเกินขนาดที่รองรับ</AlertTitle><AlertDescription>ระบบยังไม่ได้ตัดข้อความหรือส่งข้อมูลส่วนใด เนื้อหารายงานหลักต้องไม่เกิน {MAX_ANALYSIS_CHARS.toLocaleString()} ตัวอักษร และข้อความทั้งหมดรวมภาคผนวกต้องไม่เกิน {MAX_RAW_CHARS.toLocaleString()} ตัวอักษร</AlertDescription></Alert>}
-              {isTooShort && <Alert className="border-sky-200 bg-sky-50 text-sky-950"><AlertCircle className="size-4" /><AlertTitle>รายงานค่อนข้างสั้น</AlertTitle><AlertDescription>ยังส่งตรวจได้ แต่ผล AI อาจไม่ครบถ้วน ควรใส่เนื้อหาหลักมากกว่า 100 ตัวอักษร</AlertDescription></Alert>}
+              {(exceedsRawLimit || exceedsAnalysisLimit) && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>เอกสารยังยาวเกินขนาดที่รองรับ</AlertTitle><AlertDescription>ระบบยังไม่ได้ตัดข้อความหรือส่งข้อมูลส่วนใด เนื้อหาเอกสารหลักต้องไม่เกิน {MAX_ANALYSIS_CHARS.toLocaleString()} ตัวอักษร และข้อความทั้งหมดรวมภาคผนวกต้องไม่เกิน {MAX_RAW_CHARS.toLocaleString()} ตัวอักษร</AlertDescription></Alert>}
+              {isTooShort && <Alert className="border-sky-200 bg-sky-50 text-sky-950"><AlertCircle className="size-4" /><AlertTitle>เอกสารค่อนข้างสั้น</AlertTitle><AlertDescription>ยังส่งตรวจได้ แต่ผล AI อาจไม่ครบถ้วน ควรใส่เนื้อหาหลักมากกว่า 100 ตัวอักษร</AlertDescription></Alert>}
 
               <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4">
-                <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md text-sm font-medium focus-within:ring-2 focus-within:ring-indigo-500" htmlFor="pdf-upload"><Upload className="size-5 text-indigo-600" /> อัปโหลด PDF <span className="font-normal text-slate-500">(ไม่เกิน 10 MB)</span></label>
+                <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md text-sm font-medium focus-within:ring-2 focus-within:ring-indigo-500" htmlFor="pdf-upload"><Upload className="size-5 text-indigo-600" /> อัปโหลด PDF <span className="font-normal text-slate-500">({PDF_LIMITS_LABEL})</span></label>
                 <input id="pdf-upload" className="sr-only" type="file" accept="application/pdf,.pdf" onChange={handleFile} disabled={state === 'analyzing' || isExtracting} />
                 {isExtracting && <div className="mt-3 space-y-2"><p className="flex items-center gap-2 text-sm text-indigo-700"><LoaderCircle className="size-4 animate-spin" />กำลังอ่านข้อความจาก PDF {pdfProgress ? `${pdfProgress.completed}/${pdfProgress.total} หน้า` : ''}</p>{pdfProgress && <Progress value={(pdfProgress.completed / pdfProgress.total) * 100} />}<Button type="button" size="sm" variant="outline" onClick={() => pdfAbortRef.current?.abort()}>ยกเลิกการอ่าน PDF</Button></div>}
                 {fileName && <p className="mt-2 break-all text-sm text-slate-700"><FileText className="mr-1 inline size-4" />{fileName}</p>}
@@ -561,20 +603,28 @@ function App() {
               </div>
               {warnings.map((warning) => <Alert key={warning} className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>โปรดตรวจข้อความจาก PDF</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>)}
               <div className="space-y-2">
-                <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={() => void startAnalysis()} disabled={!canAnalyze}><CheckCircle2 />ตรวจรายงาน</Button>
+                <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={() => void startAnalysis()} disabled={!canAnalyze}><CheckCircle2 />{documentTypeDefinition.actionLabel}</Button>
                 {!text.trim() && <p className="text-sm text-slate-500">วางข้อความหรือเลือก PDF ก่อน ปุ่มนี้จึงจะกดได้</p>}
                 {text.trim() && !rubricValidation.success && <p className="text-sm text-red-700">โปรดแก้เกณฑ์การตรวจให้ถูกต้องก่อนส่ง</p>}
-                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร และอาจพักผลสำเร็จไว้ไม่เกิน 10 นาทีเพื่อป้องกันการส่งซ้ำ <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
+                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหาเอกสารหลัก ประเภทเอกสาร และเกณฑ์จะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร และอาจพักผลสำเร็จไว้ไม่เกิน 10 นาทีเพื่อป้องกันการส่งซ้ำ <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
               </div>
             </CardContent>
           </Card>
         </div>
 
         <Card className="mt-5">
-          <CardHeader><CardTitle>ตั้งค่าเพิ่มเติม — เกณฑ์การตรวจ</CardTitle><CardDescription>ไม่จำเป็นต้องแก้ ใช้ค่าเริ่มต้นแล้วกดตรวจได้ทันที หรือปรับหัวข้อและน้ำหนักเมื่อต้องการ</CardDescription></CardHeader>
+          <CardHeader><CardTitle>ประเภทงานและเกณฑ์การตรวจ</CardTitle><CardDescription>เลือกประเภทให้ตรงกับงาน ระบบจะเปลี่ยนหัวข้อ น้ำหนัก และจุดเน้นของ AI ให้เหมาะสม</CardDescription></CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,24rem)_auto] sm:items-end">
-              <label className="flex flex-col gap-2 text-sm font-medium" htmlFor="rubric-template">รูปแบบรายงาน<select id="rubric-template" className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-base disabled:cursor-not-allowed disabled:opacity-50" value={templateId} onChange={(event) => selectTemplate(event.target.value)} disabled={controlsLocked}>{rubricTemplates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-2 text-sm font-medium" htmlFor="document-type">ประเภทงาน<select id="document-type" className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-base disabled:cursor-not-allowed disabled:opacity-50" value={documentType} onChange={(event) => selectDocumentType(event.target.value as DocumentType)} disabled={controlsLocked}>{documentTypeDefinitions.map((definition) => <option key={definition.id} value={definition.id}>{definition.label}</option>)}</select></label>
+              <label className="flex flex-col gap-2 text-sm font-medium" htmlFor="rubric-template">ชุดเกณฑ์การตรวจ<select id="rubric-template" className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-base disabled:cursor-not-allowed disabled:opacity-50" value={templateId} onChange={(event) => selectTemplate(event.target.value)} disabled={controlsLocked}>{availableRubricTemplates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
+            </div>
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950" aria-live="polite">
+              <p className="font-medium">{documentTypeDefinition.label}: {documentTypeDefinition.description}</p>
+              <p className="mt-1"><span className="font-medium">จุดเน้น:</span> {documentTypeDefinition.reviewFocus}</p>
+              <p className="mt-1 text-amber-900"><span className="font-medium">ข้อจำกัด:</span> {documentTypeDefinition.limitation}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
               <div className="flex flex-wrap gap-2"><Badge variant="outline">ใช้ {rubric.filter((section) => section.enabled).length}/{rubric.length} หัวข้อ</Badge><Badge variant="outline">น้ำหนักรวม {Number.isFinite(enabledWeight) ? enabledWeight : 'ไม่ถูกต้อง'}</Badge></div>
             </div>
             <Button type="button" variant="outline" aria-expanded={showAdvancedRubric} onClick={() => setShowAdvancedRubric((value) => !value)}><ChevronDown className={showAdvancedRubric ? 'rotate-180 transition-transform' : 'transition-transform'} />{showAdvancedRubric ? 'ซ่อนการตั้งค่าขั้นสูง' : 'แก้ไขหัวข้อและน้ำหนัก'}</Button>
@@ -593,16 +643,31 @@ function App() {
           </CardContent>
         </Card>
 
-        {state === 'analyzing' && <section ref={analyzingRef} tabIndex={-1} className="mt-5 scroll-mt-4 outline-none" aria-label="กำลังตรวจรายงาน" aria-live="polite"><Card><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card></section>}
+        {state === 'analyzing' && <section ref={analyzingRef} tabIndex={-1} className="mt-5 scroll-mt-4 outline-none" aria-label="กำลังตรวจเอกสาร" aria-live="polite"><Card><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจเอกสาร</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card></section>}
 
-        {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={() => void startAnalysis()}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
+        {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจเอกสารไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={() => void startAnalysis()}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
 
         {state === 'result' && result && <section ref={resultRef} tabIndex={-1} className="mt-5 scroll-mt-4 space-y-5 outline-none" aria-label="ผลวิเคราะห์">
-          <Card className="border-emerald-200"><CardHeader><CardTitle>ผลตรวจเบื้องต้น</CardTitle><CardDescription>โมเดล {result.model} · เกณฑ์รุ่น {result.rubricVersion}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยโค้ดจากหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">{result.sections.length} หัวข้อ</Badge><Button variant="outline" onClick={copyResult}><Copy />คัดลอกผล</Button><Button variant="outline" onClick={downloadResult}><Download />ดาวน์โหลด .txt</Button><Button variant="outline" onClick={prepareNewAnalysis}>แก้ไขแล้วตรวจใหม่</Button></div></div>{resultActionMessage && <p className="text-sm text-indigo-700" aria-live="polite">{resultActionMessage}</p>}</CardContent></Card>
+          <Card className="border-emerald-200"><CardHeader><CardTitle>{getDocumentTypeDefinition(result.documentType).resultTitle}</CardTitle><CardDescription>ผลเบื้องต้น · ประเภทงาน {getDocumentTypeDefinition(result.documentType).label} · โมเดล {result.model} · เกณฑ์รุ่น {result.rubricVersion}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">{result.overallScore === null ? 'ทุกหัวข้อในเกณฑ์ถูกประเมินว่าไม่เกี่ยวข้องกับงานชิ้นนี้ ระบบจึงไม่คำนวณคะแนนรวม' : 'คะแนนรวมคำนวณด้วยโค้ดจากหัวข้อที่เกี่ยวข้องเท่านั้น หัวข้อที่ไม่เกี่ยวข้องไม่ถูกนับในตัวหาร'}</p><p className={`mt-1 font-semibold ${result.overallScore === null ? 'text-2xl text-slate-700' : 'text-5xl text-emerald-700'}`}>{formatOverallScore(result)}</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">ใช้ประเมิน {result.scoreSummary.applicableSectionCount}/{result.sections.length} หัวข้อ</Badge>{result.scoreSummary.notApplicableSectionCount > 0 && <Badge variant="secondary">{NOT_APPLICABLE_BADGE} {result.scoreSummary.notApplicableSectionCount} หัวข้อ</Badge>}<Button variant="outline" onClick={copyResult}><Copy />คัดลอกผล</Button><Button variant="outline" onClick={downloadResult}><Download />ดาวน์โหลด .txt</Button><Button variant="outline" onClick={prepareNewAnalysis}>แก้ไขแล้วตรวจใหม่</Button></div></div>{resultActionMessage && <p className="text-sm text-indigo-700" aria-live="polite">{resultActionMessage}</p>}</CardContent></Card>
           <Alert className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>AI อาจคลาดเคลื่อน</AlertTitle><AlertDescription>ใช้ผลนี้ช่วยทบทวนงาน ไม่ใช่คำตัดสินแทนอาจารย์ และไม่ใช่ผลตรวจลอกเลียนผลงาน</AlertDescription></Alert>
-          <Card><CardHeader><CardTitle>สิ่งที่ควรแก้ก่อนส่ง</CardTitle><CardDescription>เรียงจากหัวข้อคะแนนต่ำและน้ำหนักสูงก่อน ตรวจยืนยันกับรายงานต้นฉบับทุกครั้ง</CardDescription></CardHeader><CardContent>{priorityItems.length ? <ol className="space-y-3 text-sm">{priorityItems.map((item, index) => <li key={`${item.section}-${item.missing}`} className="rounded-lg border bg-slate-50 p-3"><p className="font-medium text-slate-900">{index + 1}. {item.section}</p><p className="mt-1 leading-6 text-slate-700">อาจยังขาด: {item.missing}</p><p className="mt-1 leading-6 text-indigo-800">ควรทำ: {item.recommendation}</p></li>)}</ol> : <p className="text-sm leading-6 text-slate-600">AI ไม่พบประเด็นที่ขาดอย่างชัดเจนจากข้อความที่ส่ง แต่ยังควรตรวจเทียบกับเกณฑ์รายวิชาและไฟล์ต้นฉบับ</p>}</CardContent></Card>
-          <div className="grid gap-4 lg:grid-cols-2">{result.sections.map((section) => <Card key={section.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{section.title}</CardTitle><CardDescription>น้ำหนัก {section.weight} · ความมั่นใจของ AI {Math.round(section.confidence * 100)}%</CardDescription></div><Badge>{section.score}/3</Badge></div></CardHeader><CardContent className="space-y-3 text-sm"><div><p className="font-medium">เหตุผล</p><p className="mt-1 leading-6 text-slate-600">{section.reason}</p></div><div><p className="font-medium">หลักฐานที่พบ</p>{section.evidence.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">ยังไม่พบหลักฐานชัดเจนในข้อความที่ส่ง</p>}</div><div><p className="font-medium">ข้อมูลหรือหลักฐานที่อาจยังขาด</p>{section.missing.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.missing.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">AI ไม่พบประเด็นที่ขาดจากข้อความที่ส่ง</p>}</div><div><p className="font-medium">คำแนะนำ</p><p className="mt-1 leading-6 text-slate-600">{section.recommendation}</p></div></CardContent></Card>)}</div>
-          <div className="grid gap-6 lg:grid-cols-2"><Card><CardHeader><CardTitle>ความสอดคล้องระหว่างบท</CardTitle><CardDescription>วัตถุประสงค์ · วิธีดำเนินงาน · ผล · สรุปผล</CardDescription></CardHeader><CardContent>{result.consistencyNotes.length ? <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700">{result.consistencyNotes.map((note) => <li key={note}>{note}</li>)}</ul> : <p className="text-sm text-slate-500">AI ไม่ได้ระบุข้อสังเกตเพิ่มเติม</p>}</CardContent></Card><Card><CardHeader><CardTitle>เอกสารอ้างอิง</CardTitle><CardDescription>ผลตรวจรูปแบบเบื้องต้น โปรดยืนยันกับเกณฑ์รายวิชา</CardDescription></CardHeader><CardContent className="space-y-3 text-sm leading-6 text-slate-700"><p>{result.referenceComment}</p>{referenceSummary.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5">{referenceSummary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</CardContent></Card></div>
+          <Card><CardHeader><CardTitle>สิ่งที่ควรแก้ก่อนส่ง</CardTitle><CardDescription>เรียงจากหัวข้อคะแนนต่ำและน้ำหนักสูงก่อน ตรวจยืนยันกับเอกสารต้นฉบับทุกครั้ง</CardDescription></CardHeader><CardContent>{priorityItems.length ? <ol className="space-y-3 text-sm">{priorityItems.map((item, index) => <li key={`${item.section}-${item.missing}`} className="rounded-lg border bg-slate-50 p-3"><p className="font-medium text-slate-900">{index + 1}. {item.section}</p><p className="mt-1 leading-6 text-slate-700">อาจยังขาด: {item.missing}</p><p className="mt-1 leading-6 text-indigo-800">ควรทำ: {item.recommendation}</p></li>)}</ol> : <p className="text-sm leading-6 text-slate-600">AI ไม่พบประเด็นที่ขาดอย่างชัดเจนจากข้อความที่ส่ง แต่ยังควรตรวจเทียบกับเกณฑ์รายวิชาและไฟล์ต้นฉบับ</p>}</CardContent></Card>
+          <div className="grid gap-4 lg:grid-cols-2">{result.sections.map((section) => <Card key={section.id} className={isNotApplicable(section) ? 'border-slate-200 bg-slate-50' : undefined}>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-3">
+                <div><CardTitle>{section.title}</CardTitle><CardDescription>{isNotApplicable(section) ? `น้ำหนัก ${section.weight} · ไม่ถูกนำมาคิดคะแนน` : `น้ำหนัก ${section.weight} · ความมั่นใจของ AI ${Math.round(section.confidence * 100)}%`}</CardDescription></div>
+                {isNotApplicable(section) ? <Badge variant="secondary">{NOT_APPLICABLE_BADGE}</Badge> : <Badge>{section.score}/3</Badge>}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div><p className="font-medium">เหตุผล</p><p className="mt-1 leading-6 text-slate-600">{section.reason}</p></div>
+              {!isNotApplicable(section) && <>
+                <div><p className="font-medium">หลักฐานที่พบ</p>{section.evidence.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">ยังไม่พบหลักฐานชัดเจนในข้อความที่ส่ง</p>}</div>
+                <div><p className="font-medium">ข้อมูลหรือหลักฐานที่อาจยังขาด</p>{section.missing.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.missing.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">AI ไม่พบประเด็นที่ขาดจากข้อความที่ส่ง</p>}</div>
+                <div><p className="font-medium">คำแนะนำ</p><p className="mt-1 leading-6 text-slate-600">{section.recommendation}</p></div>
+              </>}
+            </CardContent>
+          </Card>)}</div>
+          <div className="grid gap-6 lg:grid-cols-2"><Card><CardHeader><CardTitle>ความสอดคล้องของเอกสาร</CardTitle><CardDescription>{getDocumentTypeDefinition(result.documentType).consistencyDimensions.join(' · ')}</CardDescription></CardHeader><CardContent>{result.consistencyNotes.length ? <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700">{result.consistencyNotes.map((note) => <li key={note}>{note}</li>)}</ul> : <p className="text-sm text-slate-500">AI ไม่ได้ระบุข้อสังเกตเพิ่มเติม</p>}</CardContent></Card><Card><CardHeader><CardTitle>เอกสารอ้างอิง</CardTitle><CardDescription>ผลตรวจรูปแบบเบื้องต้น โปรดยืนยันกับเกณฑ์รายวิชา</CardDescription></CardHeader><CardContent className="space-y-3 text-sm leading-6 text-slate-700"><p>{result.referenceComment}</p>{referenceSummary.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5">{referenceSummary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</CardContent></Card></div>
           {result.qualityWarnings.length > 0 && <Card><CardHeader><CardTitle>คำเตือนคุณภาพข้อความ</CardTitle></CardHeader><CardContent><ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">{result.qualityWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></CardContent></Card>}
         </section>}
 

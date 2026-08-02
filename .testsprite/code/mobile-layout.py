@@ -36,9 +36,9 @@ async def run_test():
 
         await page.goto(TARGET_URL, wait_until="domcontentloaded")
 
-        heading = page.get_by_role("heading", name="ตรวจรายงานด้วย AI", level=1)
+        heading = page.get_by_role("heading", name="RubricLens AI", level=1)
         await expect(heading).to_be_visible()
-        assert await heading.text_content() == "ตรวจรายงานด้วย AI"
+        assert await heading.text_content() == "RubricLens AI"
 
         layout = await page.evaluate(
             """
@@ -57,7 +57,7 @@ async def run_test():
             "โดยมีรายละเอียดเพียงพอสำหรับเปิดใช้งานปุ่มตรวจรายงาน "
             "และไม่มีข้อมูลส่วนบุคคลหรือข้อมูลจริงของผู้ใช้งาน"
         )
-        await page.get_by_label("ข้อความรายงาน").fill(report)
+        await page.get_by_label("ข้อความเอกสาร").fill(report)
 
         analyze_button = page.get_by_role("button", name="ตรวจรายงาน")
         await expect(analyze_button).to_be_visible()

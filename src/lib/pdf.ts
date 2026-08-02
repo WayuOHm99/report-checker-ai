@@ -1,5 +1,7 @@
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
+import { MAX_PDF_PAGES, pdfPageLimitMessage } from './document'
+
 export type PdfExtraction = {
   pageCount: number
   text: string
@@ -75,6 +77,10 @@ export async function extractPdfText(file: File, options: PdfExtractionOptions =
 
   try {
     const pdf = await loadingTask.promise
+    // Checked before the extraction loop starts, so an oversized document costs
+    // one document open rather than thousands of page renders. The `finally`
+    // block below still destroys the loading task.
+    if (pdf.numPages > MAX_PDF_PAGES) throw new Error(pdfPageLimitMessage(pdf.numPages))
     const pages: string[] = []
     let multiColumnPages = 0
 

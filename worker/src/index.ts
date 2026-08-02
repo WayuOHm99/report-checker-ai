@@ -1,14 +1,25 @@
 import { GoogleGenAI } from '@google/genai'
 import { z } from 'zod'
 
-import { ANALYSIS_RESPONSE_JSON_SCHEMA, buildAnalysisContents, prepareWorkerDocument, splitDocumentForAnalysis, SYSTEM_INSTRUCTION } from './prompt'
+import {
+  ANALYSIS_RESPONSE_JSON_SCHEMA, buildAnalysisContents, buildConsolidationContents, compactChunkFindings,
+  CONSOLIDATION_SYSTEM_INSTRUCTION, prepareWorkerDocument, splitDocumentForAnalysis, SYSTEM_INSTRUCTION,
+} from './prompt'
+import {
+  API_VERSION, API_VERSION_HEADER, DEFAULT_APPLICABILITY, isSupportedRequestApiVersion, LEGACY_API_VERSION,
+  SECTION_APPLICABILITY, SUPPORTED_REQUEST_API_VERSIONS, type RequestApiVersion,
+} from '../../shared/api-contract'
+import { DOCUMENT_TYPES, getDocumentTypeDefinition, LEGACY_DOCUMENT_TYPE, type DocumentType } from '../../shared/document-types'
+import { calculateOverallScore } from '../../shared/scoring'
 
 const MAX_CHARS_DEFAULT = 200_000
 const MAX_RAW_CHARS = 300_000
 const MAX_REQUEST_BYTES = 1_100_000
 const RATE_LIMIT_PER_HOUR = 10
 const IDEMPOTENCY_TTL_SECONDS = 10 * 60
+const IDEMPOTENCY_RECORD_VERSION = 1
 const SINGLE_CALL_TOKEN_LIMIT = 110_000
+const MAX_ANALYSIS_CHUNKS = 6
 const DEFAULT_DAILY_TOKEN_BUDGET = 2_000_000
 const DEFAULT_PRIMARY_MODEL = 'gemini-3.6-flash'
 const DEFAULT_FALLBACK_MODEL = 'gemini-3.5-flash-lite'
@@ -41,6 +52,7 @@ const rubricSchema = z.object({
 
 const requestSchema = z.object({
   reportText: z.string().trim().min(1).max(MAX_RAW_CHARS),
+  documentType: z.enum(DOCUMENT_TYPES).optional().default(LEGACY_DOCUMENT_TYPE),
   anonymousToken: z.string().min(16).max(200),
   rubric: rubricSchema,
   referenceSummary: z.object({
@@ -48,10 +60,29 @@ const requestSchema = z.object({
     authorYearCitationCount: z.number().int().nonnegative(), unmatchedNumericCitationCount: z.number().int().nonnegative(), potentiallyUncitedEntryCount: z.number().int().nonnegative(),
   }).strict(),
   documentOptions: z.object({ excludeAppendix: z.boolean() }).strict().optional().default({ excludeAppendix: false }),
-}).strict()
+}).strict().superRefine(({ documentType, rubric }, context) => {
+  const knownRubricTypes: Record<string, DocumentType> = {
+    'general-report-th-v1': 'general-report',
+    'project-th-v1': 'project',
+    'research-th-v1': 'research-report',
+  }
+  const expectedType = knownRubricTypes[rubric.version]
+  if (expectedType && expectedType !== documentType) {
+    context.addIssue({ code: 'custom', path: ['rubric', 'version'], message: 'rubric version ไม่ตรงกับประเภทเอกสาร' })
+  }
+})
+
+type AnalysisRequest = z.infer<typeof requestSchema>
 
 const analysisSectionSchema = z.object({
-  id: z.string().trim().min(1).max(100), score: z.number().int().min(0).max(3),
+  id: z.string().trim().min(1).max(100),
+  /**
+   * Older prompts had no applicability field. Defaulting to "applicable" keeps
+   * an omission on the safe side: the section still counts toward the score
+   * instead of silently disappearing from the denominator.
+   */
+  applicability: z.enum(SECTION_APPLICABILITY).optional().default(DEFAULT_APPLICABILITY),
+  score: z.number().int().min(0).max(3),
   reason: z.string().trim().min(1).max(2_000), evidence: z.array(z.string().trim().min(1).max(1_000)).max(3),
   missing: z.array(z.string().trim().min(1).max(1_000)).max(3), recommendation: z.string().trim().min(1).max(2_000),
   confidence: z.number().min(0).max(1),
@@ -64,6 +95,7 @@ const modelResponseSchema = z.object({
 }).strict()
 
 type ModelResponse = z.infer<typeof modelResponseSchema>
+type ModelSection = ModelResponse['sections'][number]
 type ActiveSection = ReturnType<typeof sanitizeRubric>[number]
 
 class ApiFailure extends Error {
@@ -119,7 +151,7 @@ function withCors(response: Response, request: Request, env: AnalysisEnv) {
   const headers = new Headers(response.headers)
   headers.set('access-control-allow-origin', origin)
   headers.set('access-control-allow-methods', 'POST, OPTIONS')
-  headers.set('access-control-allow-headers', 'content-type, idempotency-key')
+  headers.set('access-control-allow-headers', `content-type, idempotency-key, ${API_VERSION_HEADER.toLowerCase()}`)
   headers.set('access-control-max-age', '86400')
   headers.set('vary', 'Origin')
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
@@ -128,7 +160,7 @@ function withCors(response: Response, request: Request, env: AnalysisEnv) {
 async function readJsonWithinLimit(request: Request) {
   const declaredSize = Number(request.headers.get('content-length'))
   if (Number.isFinite(declaredSize) && declaredSize > MAX_REQUEST_BYTES) throw new ApiFailure('REQUEST_TOO_LARGE', 'คำขอมีขนาดเกินที่ระบบรองรับ และยังไม่มีข้อมูลส่วนใดถูกส่งให้ AI', 413)
-  if (!request.body) throw new ApiFailure('MISSING_BODY', 'ไม่พบข้อมูลรายงานในคำขอ', 400)
+  if (!request.body) throw new ApiFailure('MISSING_BODY', 'ไม่พบข้อมูลเอกสารในคำขอ', 400)
   const reader = request.body.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
@@ -163,6 +195,40 @@ async function hashKey(value: string) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+/** Key order independent representation, so two equal payloads always digest alike. */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize)
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>
+    return Object.fromEntries(Object.keys(source).sort().map((key) => [key, canonicalize(source[key])]))
+  }
+  return value
+}
+
+/**
+ * SHA-256 over the canonical form of the validated request. Only the digest is
+ * ever written to KV, so replay protection stores no additional document text.
+ */
+function canonicalRequestDigest(request: AnalysisRequest) {
+  return hashKey(JSON.stringify(canonicalize(request)))
+}
+
+function requestedApiVersion(request: Request): RequestApiVersion {
+  const header = request.headers.get(API_VERSION_HEADER)
+  if (header === null) return LEGACY_API_VERSION
+  const version = Number(header)
+  if (!Number.isInteger(version) || !isSupportedRequestApiVersion(version)) {
+    throw new ApiFailure('UNSUPPORTED_API_VERSION', 'หน้าเว็บและระบบตรวจเป็นคนละรุ่น โปรดรีเฟรชหน้าแล้วลองใหม่', 426, false)
+  }
+  return version
+}
+
+const idempotencyRecordSchema = z.object({
+  version: z.literal(IDEMPOTENCY_RECORD_VERSION),
+  digest: z.string().length(64),
+  response: z.string().min(1),
+}).strict()
+
 async function incrementCounter(store: RateLimitStore | undefined, key: string, limit: number, amount = 1, expirationTtl = 60 * 60) {
   if (!store) return false
   const existing = Number(await store.get(key) ?? '0')
@@ -171,22 +237,48 @@ async function incrementCounter(store: RateLimitStore | undefined, key: string, 
   return false
 }
 
+/**
+ * Reserves a conservative token estimate before each application-level model
+ * call. Prompt counts come from countTokens; output is bounded by a documented
+ * estimate. Provider-internal retries are not observable here, so this remains
+ * a cost-abuse guard rather than billing-grade accounting.
+ */
+type TokenLedger = {
+  charge(tokens: number): Promise<void>
+  readonly spent: number
+}
+
+function createTokenLedger(env: AnalysisEnv): TokenLedger {
+  const configured = Number(env.DAILY_TOKEN_BUDGET ?? String(DEFAULT_DAILY_TOKEN_BUDGET))
+  const limit = Number.isFinite(configured) ? configured : DEFAULT_DAILY_TOKEN_BUDGET
+  const key = `budget:tokens:${new Date().toISOString().slice(0, 10)}`
+  let spent = 0
+  return {
+    get spent() { return spent },
+    async charge(tokens: number) {
+      const amount = Math.max(0, Math.ceil(tokens))
+      spent += amount
+      if (await incrementCounter(env.RATE_LIMIT, key, limit, amount, 60 * 60 * 36)) {
+        throw new ApiFailure('DAILY_TOKEN_BUDGET', 'งบประมาณ token ของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429)
+      }
+    },
+  }
+}
+
+/** Structured JSON output stays small and scales with the rubric, not the document. */
+function estimateOutputTokens(sectionCount: number) {
+  return 500 + (sectionCount * 250)
+}
+
 function sanitizeRubric(sections: z.infer<typeof rubricSectionSchema>[]) {
   return sections.filter((section) => section.enabled && section.weight > 0).map((section) => ({
     id: section.id.trim(), title: section.title.trim(), criteria: section.criteria.trim(), weight: section.weight,
   }))
 }
 
-function calculateOverallScore(sections: Array<{ score: number; weight: number }>) {
-  const denominator = sections.reduce((sum, section) => sum + (3 * section.weight), 0)
-  if (denominator === 0) return 0
-  const numerator = sections.reduce((sum, section) => sum + (section.score * section.weight), 0)
-  return Math.round((numerator / denominator) * 100)
-}
-
 function mockModelResponse(sections: ActiveSection[]): ModelResponse {
   return {
-    sections: sections.map((section) => ({ id: section.id, score: 2, reason: `พบเนื้อหาที่เกี่ยวข้องกับ ${section.title} ในระดับเบื้องต้น`, evidence: [], missing: ['โปรดยืนยันรายละเอียดกับอาจารย์ผู้สอน'], recommendation: `เพิ่มรายละเอียดตามเกณฑ์: ${section.criteria}`, confidence: 0.5 })),
+    sections: sections.map((section) => ({ id: section.id, applicability: DEFAULT_APPLICABILITY, score: 2, reason: `พบเนื้อหาที่เกี่ยวข้องกับ ${section.title} ในระดับเบื้องต้น`, evidence: [], missing: ['โปรดยืนยันรายละเอียดกับอาจารย์ผู้สอน'], recommendation: `เพิ่มรายละเอียดตามเกณฑ์: ${section.criteria}`, confidence: 0.5 })),
     qualityWarnings: ['นี่คือ mock response — ยังไม่ได้เรียก Gemini'], consistencyNotes: [], referenceComment: 'ใช้ผลตรวจอ้างอิงเบื้องต้นประกอบการพิจารณา',
   }
 }
@@ -195,39 +287,31 @@ function safelyParseJson(value: string) {
   try { return JSON.parse(value) as unknown } catch { return undefined }
 }
 
+/**
+ * A section the model declared irrelevant must not carry evidence, gaps or a
+ * score, because application code removes its weight from the denominator.
+ * Enforcing that here means a fabricated excerpt cannot survive into the result.
+ */
+function normalizeSection(section: ModelSection): ModelSection {
+  if (section.applicability === 'not_applicable') {
+    return { ...section, score: 0, evidence: [], missing: [], confidence: Math.min(section.confidence, 1) }
+  }
+  // Several chunks routinely quote the same passage; collapse repeats so the
+  // consolidated result never shows the same excerpt twice.
+  return { ...section, evidence: uniqueLimited(section.evidence, 3), missing: uniqueLimited(section.missing, 3) }
+}
+
 function validateExactSections(value: unknown, activeSections: ActiveSection[]) {
   const parsed = modelResponseSchema.safeParse(value)
   if (!parsed.success) return undefined
   const expected = activeSections.map((section) => section.id)
   const received = parsed.data.sections.map((section) => section.id)
   if (new Set(received).size !== received.length || received.length !== expected.length || expected.some((id) => !received.includes(id))) return undefined
-  return parsed.data
+  return { ...parsed.data, sections: parsed.data.sections.map(normalizeSection) }
 }
 
 function uniqueLimited(values: string[], limit: number) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, limit)
-}
-
-function mergeChunkResponses(responses: ModelResponse[], activeSections: ActiveSection[]) {
-  if (responses.length === 1) return responses[0]
-  const sections = activeSections.map((active) => {
-    const candidates = responses.map((response) => response.sections.find((section) => section.id === active.id)).filter((section): section is ModelResponse['sections'][number] => Boolean(section))
-    const strongest = [...candidates].sort((left, right) => right.score - left.score || right.confidence - left.confidence)[0]
-    const strongestScore = strongest.score
-    const strongestCandidates = candidates.filter((candidate) => candidate.score === strongestScore)
-    return {
-      ...strongest,
-      evidence: uniqueLimited(candidates.flatMap((candidate) => candidate.evidence), 3),
-      missing: uniqueLimited(strongestCandidates.flatMap((candidate) => candidate.missing), 3),
-      confidence: Math.max(...candidates.map((candidate) => candidate.confidence)),
-    }
-  })
-  return {
-    sections,
-    qualityWarnings: uniqueLimited(['เอกสารเกินขนาด token สำหรับการวิเคราะห์ครั้งเดียว ระบบจึงแบ่งเป็นส่วนโดยไม่ตัดข้อความ', ...responses.flatMap((response) => response.qualityWarnings)], 5),
-    consistencyNotes: uniqueLimited(responses.flatMap((response) => response.consistencyNotes), 5),
-    referenceComment: responses.map((response) => response.referenceComment).find(Boolean) ?? 'โปรดยืนยันเอกสารอ้างอิงกับเกณฑ์รายวิชา',
-  }
 }
 
 function mapGeminiError(error: unknown) {
@@ -257,15 +341,38 @@ function exhaustedGeminiFailure(error: unknown) {
   return failure
 }
 
-async function generateValidated(ai: GoogleGenAI, model: string, prompt: string, activeSections: ActiveSection[]) {
-  const generate = async (contents: string) => {
-    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
+async function countPromptTokens(ai: GoogleGenAI, model: string, systemInstruction: string, prompt: string) {
+  try {
+    const count = await ai.models.countTokens({ model, contents: `${systemInstruction}\n\n${prompt}` })
+    return count.totalTokens ?? 0
+  } catch (error) {
+    throw mapGeminiError(error)
+  }
+}
+
+type ModelCall = {
+  systemInstruction: string
+  prompt: string
+  promptTokens: number
+}
+
+async function generateValidated(ai: GoogleGenAI, model: string, call: ModelCall, activeSections: ActiveSection[], ledger: TokenLedger) {
+  const generate = async (modelCall: ModelCall) => {
+    const maxOutputTokens = estimateOutputTokens(activeSections.length)
+    await ledger.charge(modelCall.promptTokens + maxOutputTokens)
+    const response = await ai.models.generateContent({
+      model,
+      contents: modelCall.prompt,
+      config: { systemInstruction: modelCall.systemInstruction, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA, maxOutputTokens },
+    })
     return response.text ?? ''
   }
   try {
-    const first = validateExactSections(safelyParseJson(await generate(prompt)), activeSections)
+    const first = validateExactSections(safelyParseJson(await generate(call)), activeSections)
     if (first) return first
-    const retry = validateExactSections(safelyParseJson(await generate(`${prompt}\n\nReturn valid JSON with every rubric id exactly once.`)), activeSections)
+    const retryPrompt = `${call.prompt}\n\nReturn valid JSON with every rubric id exactly once.`
+    const retryPromptTokens = await countPromptTokens(ai, model, call.systemInstruction, retryPrompt)
+    const retry = validateExactSections(safelyParseJson(await generate({ ...call, prompt: retryPrompt, promptTokens: retryPromptTokens })), activeSections)
     if (retry) return retry
     throw new ApiFailure('INVALID_AI_RESPONSE', 'คำตอบจาก AI ไม่ครบตามหัวข้อที่กำหนด โปรดลองใหม่อีกครั้ง', 502, true)
   } catch (error) {
@@ -274,39 +381,79 @@ async function generateValidated(ai: GoogleGenAI, model: string, prompt: string,
   }
 }
 
-async function prepareModelPlan(ai: GoogleGenAI, model: string, reportText: string, referenceSummary: unknown, activeSections: ActiveSection[]) {
-  const fullPrompt = buildAnalysisContents({ reportText, referenceSummary }, activeSections)
-  let fullTokenCount: number
+type AnalysisPayload = {
+  reportText: string
+  referenceSummary: unknown
+  documentType: DocumentType
+}
+
+type ModelPlan = {
+  model: string
+  chunks: ModelCall[]
+}
+
+async function prepareModelPlan(ai: GoogleGenAI, model: string, payload: AnalysisPayload, activeSections: ActiveSection[]): Promise<ModelPlan> {
+  const fullPrompt = buildAnalysisContents(payload, activeSections)
+  const fullTokenCount = await countPromptTokens(ai, model, SYSTEM_INSTRUCTION, fullPrompt)
+  if (fullTokenCount <= SINGLE_CALL_TOKEN_LIMIT) {
+    return { model, chunks: [{ systemInstruction: SYSTEM_INSTRUCTION, prompt: fullPrompt, promptTokens: fullTokenCount }] }
+  }
+
+  const texts = splitDocumentForAnalysis(payload.reportText)
+  if (texts.length > MAX_ANALYSIS_CHUNKS) throw new ApiFailure('DOCUMENT_TOKEN_LIMIT', 'เอกสารมี token มากเกินขนาดที่ระบบแบ่งวิเคราะห์ได้ โปรดลดเนื้อหาแล้วลองใหม่', 413)
+  const prompts = texts.map((chunk, index) => buildAnalysisContents({ ...payload, reportText: chunk }, activeSections, { index: index + 1, total: texts.length }))
+  const tokenCounts = await Promise.all(prompts.map((prompt) => countPromptTokens(ai, model, SYSTEM_INSTRUCTION, prompt)))
+  const chunks = prompts.map((prompt, index) => ({ systemInstruction: SYSTEM_INSTRUCTION, prompt, promptTokens: tokenCounts[index] }))
+  const plannedInputTokens = tokenCounts.reduce((sum, tokens) => sum + tokens, 0)
+  if (chunks.some((chunk) => chunk.promptTokens > SINGLE_CALL_TOKEN_LIMIT) || plannedInputTokens > 1_000_000) {
+    throw new ApiFailure('DOCUMENT_TOKEN_LIMIT', 'เอกสารมี token มากเกินขนาดที่ระบบแบ่งวิเคราะห์ได้ โปรดลดเนื้อหาแล้วลองใหม่', 413)
+  }
+  return { model, chunks }
+}
+
+/**
+ * Second stage of a chunked analysis: the model sees only the structured
+ * findings from every chunk — never the document text again — and re-judges the
+ * rubric for the document as a whole.
+ */
+async function consolidateChunkFindings(
+  ai: GoogleGenAI, model: string, responses: ModelResponse[], payload: AnalysisPayload, activeSections: ActiveSection[], ledger: TokenLedger,
+) {
+  const findings = responses.map((response, index) => compactChunkFindings(index + 1, response.sections))
+  const prompt = buildConsolidationContents({
+    referenceSummary: payload.referenceSummary, documentType: payload.documentType, findings, totalChunks: responses.length,
+  }, activeSections)
+  const promptTokens = await countPromptTokens(ai, model, CONSOLIDATION_SYSTEM_INSTRUCTION, prompt)
+  if (promptTokens > SINGLE_CALL_TOKEN_LIMIT) {
+    throw new ApiFailure('CONSOLIDATION_INPUT_TOO_LARGE', 'ผลวิเคราะห์รายส่วนรวมกันแล้วใหญ่เกินกว่าจะสรุปในครั้งเดียว โปรดลดจำนวนหัวข้อหรือความยาวเอกสารแล้วลองใหม่', 413)
+  }
+
   try {
-    const count = await ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${fullPrompt}` })
-    fullTokenCount = count.totalTokens ?? 0
+    return await generateValidated(ai, model, { systemInstruction: CONSOLIDATION_SYSTEM_INSTRUCTION, prompt, promptTokens }, activeSections, ledger)
   } catch (error) {
-    throw mapGeminiError(error)
-  }
-
-  const chunks = fullTokenCount <= SINGLE_CALL_TOKEN_LIMIT ? [reportText] : splitDocumentForAnalysis(reportText)
-  const prompts = chunks.map((chunk, index) => buildAnalysisContents({ reportText: chunk, referenceSummary }, activeSections, { index: index + 1, total: chunks.length }))
-  let plannedInputTokens = fullTokenCount
-  if (chunks.length > 1) {
-    try {
-      const counts = await Promise.all(prompts.map((prompt) => ai.models.countTokens({ model, contents: `${SYSTEM_INSTRUCTION}\n\n${prompt}` })))
-      plannedInputTokens = counts.reduce((sum, count) => sum + (count.totalTokens ?? 0), 0)
-    } catch (error) {
-      throw mapGeminiError(error)
+    if (error instanceof ApiFailure && error.code === 'INVALID_AI_RESPONSE') {
+      throw new ApiFailure('CONSOLIDATION_FAILED', 'ระบบรวมผลวิเคราะห์ทุกส่วนของเอกสารไม่สำเร็จ จึงยังไม่แสดงคะแนนเพื่อไม่ให้ผลคลาดเคลื่อน โปรดลองใหม่อีกครั้ง', 502, true)
     }
+    throw error
   }
-  if (prompts.length > 10 || plannedInputTokens > 1_000_000) throw new ApiFailure('DOCUMENT_TOKEN_LIMIT', 'เอกสารมี token มากเกินขนาดที่ระบบแบ่งวิเคราะห์ได้ โปรดลดเนื้อหาแล้วลองใหม่', 413)
-
-  return { model, plannedInputTokens, prompts }
 }
 
-async function generateModelPlan(ai: GoogleGenAI, plan: Awaited<ReturnType<typeof prepareModelPlan>>, activeSections: ActiveSection[]) {
+async function generateModelPlan(ai: GoogleGenAI, plan: ModelPlan, payload: AnalysisPayload, activeSections: ActiveSection[], ledger: TokenLedger) {
   const responses: ModelResponse[] = []
-  for (const prompt of plan.prompts) responses.push(await generateValidated(ai, plan.model, prompt, activeSections))
-  return mergeChunkResponses(responses, activeSections)
+  for (const call of plan.chunks) responses.push(await generateValidated(ai, plan.model, call, activeSections, ledger))
+  if (responses.length === 1) return responses[0]
+
+  const consolidated = await consolidateChunkFindings(ai, plan.model, responses, payload, activeSections, ledger)
+  return {
+    ...consolidated,
+    qualityWarnings: uniqueLimited([
+      `เอกสารยาวเกินการวิเคราะห์ครั้งเดียว ระบบจึงอ่านเป็น ${responses.length} ส่วนโดยไม่ตัดข้อความ แล้วสรุปรวมทั้งเอกสารอีกครั้ง`,
+      ...consolidated.qualityWarnings,
+    ], 5),
+  }
 }
 
-async function analyzeWithGemini(reportText: string, referenceSummary: unknown, activeSections: ActiveSection[], env: AnalysisEnv) {
+async function analyzeWithGemini(payload: AnalysisPayload, activeSections: ActiveSection[], env: AnalysisEnv, ledger: TokenLedger) {
   if (!env.GEMINI_API_KEY) throw new ApiFailure('AI_CONFIGURATION', 'ระบบยังไม่ได้ตั้งค่า Gemini API key กรุณาแจ้งผู้ดูแลระบบ', 503)
   const ai = new GoogleGenAI({
     apiKey: env.GEMINI_API_KEY,
@@ -318,37 +465,33 @@ async function analyzeWithGemini(reportText: string, referenceSummary: unknown, 
   const configuredFallback = env.GEMINI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL
   const fallbackModel = configuredFallback === primaryModel ? undefined : configuredFallback
   let fallbackReason: ApiFailure | undefined
-  let plan: Awaited<ReturnType<typeof prepareModelPlan>>
+  let plan: ModelPlan
   try {
-    plan = await prepareModelPlan(ai, primaryModel, reportText, referenceSummary, activeSections)
+    plan = await prepareModelPlan(ai, primaryModel, payload, activeSections)
   } catch (error) {
     if (!fallbackModel || !canUseFallback(error)) throw error
     fallbackReason = error
     try {
-      plan = await prepareModelPlan(ai, fallbackModel, reportText, referenceSummary, activeSections)
+      plan = await prepareModelPlan(ai, fallbackModel, payload, activeSections)
     } catch (fallbackError) {
       throw canUseFallback(fallbackError) ? exhaustedGeminiFailure(fallbackError) : fallbackError
     }
   }
 
   const dailyRequestLimit = Number(env.DAILY_BUDGET_LIMIT ?? '100')
-  const dailyTokenLimit = Number(env.DAILY_TOKEN_BUDGET ?? String(DEFAULT_DAILY_TOKEN_BUDGET))
-  const date = new Date().toISOString().slice(0, 10)
-  if (env.RATE_LIMIT) {
-    if (await incrementCounter(env.RATE_LIMIT, `budget:requests:${date}`, Number.isFinite(dailyRequestLimit) ? dailyRequestLimit : 100, 1, 60 * 60 * 36)) throw new ApiFailure('DAILY_REQUEST_BUDGET', 'จำนวนการตรวจของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429)
-    if (await incrementCounter(env.RATE_LIMIT, `budget:tokens:${date}`, Number.isFinite(dailyTokenLimit) ? dailyTokenLimit : DEFAULT_DAILY_TOKEN_BUDGET, plan.plannedInputTokens * 2, 60 * 60 * 36)) throw new ApiFailure('DAILY_TOKEN_BUDGET', 'งบประมาณ token ของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429)
+  if (env.RATE_LIMIT && await incrementCounter(env.RATE_LIMIT, `budget:requests:${new Date().toISOString().slice(0, 10)}`, Number.isFinite(dailyRequestLimit) ? dailyRequestLimit : 100, 1, 60 * 60 * 36)) {
+    throw new ApiFailure('DAILY_REQUEST_BUDGET', 'จำนวนการตรวจของระบบวันนี้ครบแล้ว โปรดลองใหม่วันถัดไป', 429)
   }
 
   let response: ModelResponse
   try {
-    response = await generateModelPlan(ai, plan, activeSections)
+    response = await generateModelPlan(ai, plan, payload, activeSections, ledger)
   } catch (error) {
     if (!fallbackModel || plan.model === fallbackModel || !canUseFallback(error)) throw plan.model === fallbackModel && canUseFallback(error) ? exhaustedGeminiFailure(error) : error
     fallbackReason = error
-    let fallbackPlan: Awaited<ReturnType<typeof prepareModelPlan>>
     try {
-      fallbackPlan = await prepareModelPlan(ai, fallbackModel, reportText, referenceSummary, activeSections)
-      response = await generateModelPlan(ai, fallbackPlan, activeSections)
+      const fallbackPlan = await prepareModelPlan(ai, fallbackModel, payload, activeSections)
+      response = await generateModelPlan(ai, fallbackPlan, payload, activeSections, ledger)
       plan = fallbackPlan
     } catch (fallbackError) {
       throw canUseFallback(fallbackError) ? exhaustedGeminiFailure(fallbackError) : fallbackError
@@ -362,24 +505,91 @@ async function analyzeWithGemini(reportText: string, referenceSummary: unknown, 
       qualityWarnings: uniqueLimited([`ระบบใช้โมเดลสำรอง ${plan.model} เนื่องจากโมเดลหลักไม่พร้อมหรือโควตาเต็ม โปรดยืนยันประเด็นสำคัญกับต้นฉบับ`, ...response.qualityWarnings], 5),
     }
   }
-  return { response, model: plan.model }
+  return { response, model: plan.model, chunkCount: plan.chunks.length, tokensCharged: ledger.spent }
+}
+
+function serializeAnalysisResponse(
+  apiVersion: RequestApiVersion,
+  documentType: DocumentType,
+  rubricVersion: string,
+  model: string,
+  chunkCount: number,
+  prepared: ReturnType<typeof prepareWorkerDocument>,
+  modelResponse: ModelResponse,
+  activeSections: ActiveSection[],
+) {
+  const byId = new Map(modelResponse.sections.map((section) => [section.id, section]))
+  const sections = activeSections.map((section) => ({ ...section, ...byId.get(section.id)! }))
+
+  if (apiVersion === LEGACY_API_VERSION) {
+    // Exact pre-version response shape: the deployed Pages bundle uses a
+    // strict schema and would reject documentType, apiVersion, applicability,
+    // scoreSummary or analyzedChunkCount during a Worker-first rollout.
+    const legacySections = sections.map(({ applicability: _applicability, ...section }) => section)
+    const legacyScore = calculateOverallScore(sections.map((section) => ({ ...section, applicability: DEFAULT_APPLICABILITY })))
+    return JSON.stringify({
+      overallScore: legacyScore.overallScore ?? 0,
+      sections: legacySections,
+      qualityWarnings: modelResponse.qualityWarnings.slice(0, 5),
+      consistencyNotes: modelResponse.consistencyNotes,
+      referenceComment: modelResponse.referenceComment,
+      model,
+      rubricVersion,
+      documentInfo: { appendixExcluded: Boolean(prepared.appendixHeading), excludedCharCount: prepared.excludedCharCount },
+    })
+  }
+
+  const score = calculateOverallScore(sections)
+  return JSON.stringify({
+    apiVersion: API_VERSION,
+    documentType,
+    overallScore: score.overallScore,
+    scoreSummary: {
+      applicableSectionCount: score.applicableSectionCount,
+      notApplicableSectionCount: score.notApplicableSectionCount,
+      scoredWeight: score.scoredWeight,
+    },
+    sections,
+    qualityWarnings: modelResponse.qualityWarnings,
+    consistencyNotes: modelResponse.consistencyNotes,
+    referenceComment: modelResponse.referenceComment,
+    model,
+    rubricVersion,
+    documentInfo: {
+      appendixExcluded: Boolean(prepared.appendixHeading), excludedCharCount: prepared.excludedCharCount, analyzedChunkCount: chunkCount,
+    },
+  })
 }
 
 export async function handleAnalyze(request: Request, env: AnalysisEnv) {
   if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) throw new ApiFailure('UNSUPPORTED_CONTENT_TYPE', 'คำขอต้องเป็น JSON', 415)
   const idempotencyKey = request.headers.get('Idempotency-Key')
   if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 200) throw new ApiFailure('INVALID_IDEMPOTENCY_KEY', 'คำขอตรวจไม่สมบูรณ์ โปรดรีเฟรชหน้าแล้วลองใหม่', 400)
+
+  // The body is read and validated first, so a malformed or unauthorised-shaped
+  // request can never reach a cached result belonging to a well-formed one.
+  const rawBody = await readJsonWithinLimit(request)
+  const apiVersion = requestedApiVersion(request)
+  const parsed = requestSchema.safeParse(rawBody)
+  if (!parsed.success) throw new ApiFailure('INVALID_REQUEST', 'ข้อมูลเอกสาร ประเภท หรือเกณฑ์ไม่ถูกต้อง โปรดตรวจข้อมูลแล้วลองใหม่', 400)
+
+  const digest = await canonicalRequestDigest(parsed.data)
+  const idempotencyCacheKey = `idempotency:${await hashKey(idempotencyKey)}:v${apiVersion}`
   if (env.RATE_LIMIT) {
-    const cached = await env.RATE_LIMIT.get(`idempotency:${idempotencyKey}`)
-    if (cached) return new Response(cached, { headers: securityHeaders })
+    const cached = await env.RATE_LIMIT.get(idempotencyCacheKey)
+    if (cached) {
+      const record = idempotencyRecordSchema.safeParse(safelyParseJson(cached))
+      if (record.success && record.data.digest === digest) return new Response(record.data.response, { headers: securityHeaders })
+      if (record.success) {
+        throw new ApiFailure('IDEMPOTENCY_CONFLICT', 'คีย์คำขอนี้ถูกใช้กับเอกสารหรือเกณฑ์ชุดอื่นไปแล้ว โปรดเริ่มการตรวจใหม่เพื่อรับคีย์ใหม่', 409, false)
+      }
+    }
   }
 
-  const parsed = requestSchema.safeParse(await readJsonWithinLimit(request))
-  if (!parsed.success) throw new ApiFailure('INVALID_REQUEST', 'ข้อมูลรายงานหรือเกณฑ์ไม่ถูกต้อง โปรดตรวจข้อมูลแล้วลองใหม่', 400)
   const prepared = prepareWorkerDocument(parsed.data.reportText)
   if (prepared.appendixHeading && !parsed.data.documentOptions.excludeAppendix) throw new ApiFailure('APPENDIX_CONFIRMATION_REQUIRED', `พบส่วน “${prepared.appendixHeading}” กรุณายืนยันการไม่นำภาคผนวกไปวิเคราะห์`, 409)
-  if (!prepared.mainText) throw new ApiFailure('EMPTY_MAIN_DOCUMENT', 'ไม่พบเนื้อหารายงานหลักก่อนภาคผนวก', 400)
-  if (prepared.mainText.length > maxChars(env)) throw new ApiFailure('DOCUMENT_CHAR_LIMIT', 'เนื้อหารายงานหลักยาวเกิน 200,000 ตัวอักษร ระบบไม่ได้ตัดหรือส่งข้อความ', 413)
+  if (!prepared.mainText) throw new ApiFailure('EMPTY_MAIN_DOCUMENT', 'ไม่พบเนื้อหาเอกสารหลักก่อนภาคผนวก', 400)
+  if (prepared.mainText.length > maxChars(env)) throw new ApiFailure('DOCUMENT_CHAR_LIMIT', 'เนื้อหาเอกสารหลักยาวเกิน 200,000 ตัวอักษร ระบบไม่ได้ตัดหรือส่งข้อความ', 413)
 
   const activeSections = sanitizeRubric(parsed.data.rubric.sections)
   if (activeSections.length === 0) throw new ApiFailure('EMPTY_RUBRIC', 'ต้องมีหัวข้อที่นำมาคิดคะแนนและมีน้ำหนักมากกว่า 0 อย่างน้อยหนึ่งหัวข้อ', 400)
@@ -392,22 +602,21 @@ export async function handleAnalyze(request: Request, env: AnalysisEnv) {
     if (limitedIp || limitedToken) throw new ApiFailure('RATE_LIMITED', 'ส่งคำขอครบขีดจำกัดชั่วคราวแล้ว โปรดลองใหม่ในชั่วโมงถัดไป', 429, true)
   } else if (env.MOCK_ANALYSIS !== 'true') throw new ApiFailure('RATE_LIMIT_UNAVAILABLE', 'ระบบจำกัดคำขอยังไม่พร้อม กรุณาแจ้งผู้ดูแลระบบ', 503)
 
+  const payload: AnalysisPayload = { reportText: prepared.mainText, referenceSummary: parsed.data.referenceSummary, documentType: parsed.data.documentType }
   const modelOutput = env.MOCK_ANALYSIS === 'true'
-    ? { response: mockModelResponse(activeSections), model: 'mock-analysis-v1' }
-    : await analyzeWithGemini(prepared.mainText, parsed.data.referenceSummary, activeSections, env)
-  const byId = new Map(modelOutput.response.sections.map((section) => [section.id, section]))
-  const sections = activeSections.map((section) => ({ ...section, ...byId.get(section.id)! }))
-  const responseBody = {
-    overallScore: calculateOverallScore(sections), sections,
-    qualityWarnings: modelOutput.response.qualityWarnings,
-    consistencyNotes: modelOutput.response.consistencyNotes,
-    referenceComment: modelOutput.response.referenceComment,
-    model: modelOutput.model,
-    rubricVersion: parsed.data.rubric.version,
-    documentInfo: { appendixExcluded: Boolean(prepared.appendixHeading), excludedCharCount: prepared.excludedCharCount },
+    ? { response: { ...mockModelResponse(activeSections), consistencyNotes: [`Mock: ${getDocumentTypeDefinition(parsed.data.documentType).consistencyLabel}`] }, model: 'mock-analysis-v1', chunkCount: 1 }
+    : await analyzeWithGemini(payload, activeSections, env, createTokenLedger(env))
+  const serialized = serializeAnalysisResponse(
+    apiVersion, parsed.data.documentType, parsed.data.rubric.version, modelOutput.model, modelOutput.chunkCount,
+    prepared, modelOutput.response, activeSections,
+  )
+  if (env.RATE_LIMIT) {
+    await env.RATE_LIMIT.put(
+      idempotencyCacheKey,
+      JSON.stringify({ version: IDEMPOTENCY_RECORD_VERSION, digest, response: serialized }),
+      { expirationTtl: IDEMPOTENCY_TTL_SECONDS },
+    )
   }
-  const serialized = JSON.stringify(responseBody)
-  if (env.RATE_LIMIT) await env.RATE_LIMIT.put(`idempotency:${idempotencyKey}`, serialized, { expirationTtl: IDEMPOTENCY_TTL_SECONDS })
   return new Response(serialized, { headers: securityHeaders })
 }
 
@@ -419,7 +628,14 @@ export default {
       if (request.method === 'OPTIONS' && url.pathname === '/api/analyze') response = new Response(null, { status: 204, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else if (request.method === 'GET' && url.pathname === '/api/health') {
         const ready = Boolean(env.GEMINI_API_KEY && env.RATE_LIMIT && env.MOCK_ANALYSIS !== 'true')
-        response = json({ status: ready ? 'ok' : 'degraded', aiConfigured: Boolean(env.GEMINI_API_KEY), rateLimitConfigured: Boolean(env.RATE_LIMIT), model: env.GEMINI_MODEL ?? DEFAULT_PRIMARY_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL ?? DEFAULT_FALLBACK_MODEL }, ready ? 200 : 503)
+        response = json({
+          apiVersion: API_VERSION,
+          supportedApiVersions: [...SUPPORTED_REQUEST_API_VERSIONS],
+          legacyDefaultVersion: LEGACY_API_VERSION,
+          status: ready ? 'ok' : 'degraded',
+          aiConfigured: Boolean(env.GEMINI_API_KEY), rateLimitConfigured: Boolean(env.RATE_LIMIT),
+          model: env.GEMINI_MODEL ?? DEFAULT_PRIMARY_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL ?? DEFAULT_FALLBACK_MODEL,
+        }, ready ? 200 : 503)
       } else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
       else if (url.pathname === '/api/analyze') response = new Response(JSON.stringify({ error: 'endpoint นี้รองรับเฉพาะ POST', code: 'METHOD_NOT_ALLOWED', retryable: false }), { status: 405, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else response = errorResponse(new ApiFailure('NOT_FOUND', 'ไม่พบ endpoint ที่เรียกใช้', 404))

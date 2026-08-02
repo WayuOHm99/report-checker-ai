@@ -6,8 +6,8 @@
   "priority": "p2",
   "planSteps": [
     { "type": "action", "description": "เปิดหน้าแรกด้วย viewport โทรศัพท์มือถือแนวตั้งขนาดประมาณ 390x844 พิกเซล" },
-    { "type": "assertion", "description": "หน้าไม่มี horizontal scrollbar และหัวข้อ 'ตรวจรายงานด้วย AI' แสดงครบโดยไม่ถูกตัด" },
-    { "type": "action", "description": "กรอกข้อความรายงานสังเคราะห์อย่างน้อย 120 ตัวอักษร" },
+    { "type": "assertion", "description": "หน้าไม่มี horizontal scrollbar และหัวข้อ 'RubricLens AI' แสดงครบโดยไม่ถูกตัด" },
+    { "type": "action", "description": "กรอกข้อความเอกสารสังเคราะห์อย่างน้อย 120 ตัวอักษร" },
     { "type": "assertion", "description": "ปุ่ม 'ตรวจรายงาน' แสดงครบภายในความกว้างหน้าจอและมีความสูงอย่างน้อย 44 พิกเซล" }
   ]
 }

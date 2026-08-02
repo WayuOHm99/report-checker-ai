@@ -1,15 +1,15 @@
-# AI Report Check
+# RubricLens AI
 
-> ผู้ช่วยตรวจความครบถ้วนของโครงงานและรายงานก่อนส่ง ด้วย React, Cloudflare Workers และ Gemini
+> ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์ ด้วย React, Cloudflare Workers และ Gemini
 
 [![Live demo](https://img.shields.io/badge/demo-reportcheckxd.pages.dev-2563eb?style=flat-square)](https://reportcheckxd.pages.dev/)
-[![Tests](https://img.shields.io/badge/tests-49%20unit%20%7C%2028%20E2E%20%7C%2010%20TestSprite-16a34a?style=flat-square)](docs/testing-report.md)
+[![Tests](https://img.shields.io/badge/local%20tests-106%20unit%20%7C%2072%20E2E-16a34a?style=flat-square)](docs/testing-report.md)
 
-![AI Report Check preview](public/og.png)
+![RubricLens AI preview](public/og.png)
 
 ## Project overview
 
-AI Report Check เป็น single-page web app สำหรับช่วยทบทวนรายงานก่อนส่ง ผู้ใช้วางข้อความหรืออัปโหลด PDF แล้วตรวจหัวข้อสำคัญ เช่น บทนำ วัตถุประสงค์ วิธีดำเนินงาน ผลลัพธ์ การอ้างอิง และภาคผนวกได้ใน workflow เดียว
+RubricLens AI เป็น single-page web app สำหรับตรวจเอกสารตามเกณฑ์เฉพาะประเภท ผู้ใช้เลือกระหว่างรายงานทั่วไป โครงงาน และรายงานวิจัย แล้ววางข้อความหรืออัปโหลด PDF เพื่อรับผลตรวจพร้อมเหตุผล หลักฐานที่พบ สิ่งที่อาจยังขาด และคำแนะนำใน workflow เดียว
 
 โปรเจกต์นี้ออกแบบให้เป็น **ผู้ช่วยทบทวน ไม่ใช่ผู้ตัดสิน** ผลจาก AI จึงแสดงหลักฐาน สิ่งที่อาจขาด และคำแนะนำเพื่อให้ผู้ใช้ตรวจเทียบกับรายงานต้นฉบับอีกครั้ง
 
@@ -17,13 +17,17 @@ AI Report Check เป็น single-page web app สำหรับช่วย�
 
 ## Why this project is interesting
 
-- ทำให้การตรวจรายงานที่ต้องอ่านซ้ำหลายส่วนกลายเป็น flow ที่สั้นและอธิบายได้
+- แยกรายงานทั่วไป โครงงาน และรายงานวิจัยด้วย rubric และบริบท AI ที่ต่างกันจริง
+- ทำให้การตรวจเอกสารที่ต้องอ่านซ้ำหลายส่วนกลายเป็น flow ที่สั้นและอธิบายได้
 - แยกการคำนวณคะแนนไว้ในโค้ด ไม่ปล่อยให้โมเดลคำนวณคะแนนรวมเอง
 - ป้องกันการส่งภาคผนวกโดยไม่ตั้งใจด้วย accessible confirmation dialog
 - อ่าน PDF เฉพาะ text layer พร้อมแจ้งเตือน PDF สแกนและ PDF หลายคอลัมน์
 - รองรับ rubric templates และ custom rubric พร้อม validation น้ำหนัก/หัวข้อ
 - ออกแบบ failure paths ตั้งแต่ต้น: timeout, cancel, retry, quota, malformed AI response และ idempotency
-- มี automated quality gate ตั้งแต่ unit test ถึง browser E2E และ TestSprite บน production URL
+- คำนวณคะแนนโดยไม่นับหัวข้อที่ไม่เกี่ยวข้องกับงาน และไม่แสดง 0% ที่ทำให้เข้าใจผิดเมื่อไม่มีหัวข้อให้ประเมิน
+- วิเคราะห์เอกสารยาวแบบสองขั้น: อ่านทีละส่วน แล้วสรุปรวมทั้งเอกสารจาก structured findings
+- ป้องกันการส่งซ้ำด้วย idempotency ที่ผูกกับ digest ของคำขอ ไม่ใช่แค่ key
+- มี automated quality gate ตั้งแต่ unit test ถึง cross-browser E2E บน production build จริง
 
 ## Architecture
 
@@ -47,8 +51,10 @@ flowchart LR
 2. ระบบตรวจขนาดเอกสาร, appendix, references และ rubric ใน browser
 3. เมื่อผู้ใช้ยืนยัน จึงส่งเนื้อหาหลักไปยัง Worker
 4. Worker ตรวจ request ด้วย Zod, คุม rate limit/idempotency และเรียก Gemini
-5. Worker ตรวจ schema ของ AI response ก่อนส่งกลับ
-6. Frontend คำนวณคะแนนรวมและจัดลำดับ “สิ่งที่ควรแก้ก่อนส่ง” ด้วยโค้ด
+5. Worker ตรวจ schema ของ AI response, บังคับกฎหัวข้อที่ไม่เกี่ยวข้อง และ **คำนวณคะแนนรวมด้วยโค้ดฝั่ง Worker**
+6. Frontend ตรวจ `apiVersion` และ schema ของผลก่อนแสดง แล้วจัดลำดับ “สิ่งที่ควรแก้ก่อนส่ง” จากหัวข้อที่เกี่ยวข้องเท่านั้น
+
+> คะแนนรวมของ API จริงคำนวณใน Worker ส่วน browser คำนวณคะแนนเองเฉพาะตอนใช้ mock analysis ใน local development ทั้งสองเส้นทางใช้สูตรเดียวกันจาก `shared/scoring.ts`
 
 รายละเอียดเพิ่มเติมอยู่ใน [docs/architecture.md](docs/architecture.md)
 
@@ -61,6 +67,7 @@ flowchart LR
 | Appendix | พบหัวข้อภาคผนวก | ต้องยืนยันผ่าน dialog ก่อนส่ง และยกเลิกได้โดยไม่ส่งข้อมูล |
 | Rubric editor | เลือก template หรือแก้หัวข้อ | validate title, criteria, enabled state และ weight |
 | Result review | ดูคะแนนและหลักฐาน | score คำนวณด้วยโค้ด พร้อม copy/download ผลตรวจ |
+| Irrelevant criteria | หัวข้อที่ไม่ตรงกับลักษณะงาน | แสดง badge “ไม่เกี่ยวข้อง” แทนคะแนน และไม่นับน้ำหนักในตัวหาร |
 
 ## Tech stack
 
@@ -73,13 +80,22 @@ flowchart LR
 
 ## Quality and verification
 
+### Local verification (2 สิงหาคม 2026)
+
 | Check | Result |
 | --- | ---: |
 | `npm run lint` | passed |
-| `npm run test` | 49/49 passed |
+| `npm run test` | 115/115 passed |
+| `npm run worker:check` | passed |
+| `npm run audit:prod` | 0 vulnerabilities |
 | `npm run build` | passed |
-| `npm run test:e2e` | 28/28 passed |
-| TestSprite production suite | 10/10 passed |
+| `npm run test:e2e` | 72/72 passed |
+
+E2E รันบน output ของ `npm run build` ผ่าน `vite preview` ครอบคลุม Chromium, Mobile Chrome, Firefox และ WebKit
+
+### Production verification
+
+production ยังเสิร์ฟ build รุ่นก่อนหน้า การเปลี่ยนแปลงล่าสุดจึงยังไม่ได้ verify บน production URL และผล TestSprite ที่บันทึกไว้เป็นของ build รุ่นก่อน ไม่ใช่หลักฐานของโค้ดปัจจุบัน
 
 อ่านรายละเอียด test cases, scope และข้อจำกัดได้ที่ [docs/testing-report.md](docs/testing-report.md)
 
@@ -103,11 +119,20 @@ npm run dev
 ### Verify locally
 
 ```bash
+npm run verify
+```
+
+`npm run verify` รันชุดเดียวกับ CI คือ lint, unit tests, worker dry-run, production dependency audit และ production-preview E2E หรือรันแยกทีละขั้น:
+
+```bash
 npm run lint
 npm run test
-npm run build
+npm run worker:check
+npm run audit:prod
 npm run test:e2e
 ```
+
+`npm run test:e2e` build ใหม่เสมอแล้วทดสอบ output นั้นผ่าน `vite preview` ถ้า build ไว้แล้วและอยากรันเฉพาะ Playwright ให้ใช้ `npm run test:e2e:only`
 
 ### Worker development
 
@@ -120,24 +145,26 @@ npm run worker:dev
 
 ## Deployment
 
-Build static assets แล้ว deploy ไป Cloudflare Pages:
+ลำดับการ deploy สำคัญ: **compatibility Worker ก่อน แล้วจึง Pages** Worker รองรับ v0 shape สำหรับ Pages เดิมและ v1 ผ่าน `X-RubricLens-Api-Version` สำหรับ Pages ใหม่ จึงไม่มีช่วง contract error
 
-```bash
-npm run build
-npx wrangler pages deploy dist --project-name reportcheckxd --branch main
+```text
+Worker dry-run -> Worker deploy -> health/contract smoke -> Pages deploy -> browser smoke -> TestSprite
 ```
+
+ขั้นตอนเต็ม คำสั่ง และวิธี rollback ทั้ง Worker และ Pages อยู่ใน [docs/deployment-runbook.md](docs/deployment-runbook.md)
 
 Worker ใช้ `wrangler.jsonc` เป็น source of truth สำหรับ model, KV binding และ non-secret variables ส่วน `GEMINI_API_KEY` ต้องเก็บใน Worker Secret เท่านั้น
 
 ## Repository map
 
 ```text
+shared/              API contract, scoring formula และ document type definitions ที่ใช้ร่วมกันสองฝั่ง
 src/                 React app, UI state และ domain logic
 worker/              Cloudflare Worker API และ server-side validation
 e2e/                 Playwright flows บน desktop/mobile/browser engines
 public/              static assets, headers, sitemap และ social preview
 .testsprite/         project config, 10 plans และ custom mobile test code
-docs/                architecture, current test report และ archived notes
+docs/                architecture, deployment runbook, test report และ archived notes
 .github/workflows/   CI quality gate
 ```
 
@@ -147,7 +174,8 @@ docs/                architecture, current test report และ archived notes
 - Worker รับ JSON เท่านั้น ตรวจ request size และ schema ก่อนประมวลผล
 - ไม่ log เนื้อหารายงานโดยเจตนา และไม่เก็บไฟล์ต้นฉบับถาวร
 - session draft เก็บเฉพาะใน `sessionStorage` ของแท็บ
-- KV ใช้สำหรับ rate-limit/idempotency และผลสำเร็จอายุสั้นเท่านั้น
+- KV ใช้สำหรับ rate-limit/idempotency และผลสำเร็จอายุสั้น (10 นาที) เท่านั้น
+- ผลที่ cache ไว้อาจมีข้อความอ้างอิงสั้น ๆ ที่ AI ยกมา แต่ไม่มีเอกสารต้นฉบับฉบับเต็มหรือไฟล์ที่อัปโหลด
 - ระบบเตือนผู้ใช้ว่า AI อาจคลาดเคลื่อนและต้องตรวจเทียบกับต้นฉบับ
 
 อ่านรายละเอียดได้ที่ [SECURITY.md](SECURITY.md)
@@ -158,8 +186,10 @@ docs/                architecture, current test report และ archived notes
 
 - Built a production-deployed AI report review workflow with React, TypeScript, Cloudflare Workers and Gemini.
 - Designed schema-first AI integration with Zod validation, retry/fallback handling and code-owned score calculation.
+- Built a two-stage consolidation pass so long documents are judged as a whole from structured findings instead of by taking the best-scoring chunk.
+- Versioned the client/server contract and made idempotency payload-aware so a replayed key can never return a different document's result.
 - Implemented robust document UX for Thai text, PDF text layers, appendix confirmation and configurable rubrics.
-- Established a quality pipeline with 49 unit tests, 28 cross-browser E2E tests and 10 production TestSprite scenarios.
+- Established a quality pipeline of 106 unit tests plus 72 cross-browser E2E tests that run against the real production build served by `vite preview`, gated in CI alongside a Worker dry-run and a production dependency audit.
 - Kept secrets server-side and documented rate limits, idempotency, privacy boundaries and deployment operations.
 
 ## Project status
