@@ -21,6 +21,9 @@ dist-ssr
 coverage
 test-results
 playwright-report
+output
+worker-startup.cpuprofile
+.tmp-workers-types-latest
 
 # Editor directories and files
 .vscode/*

@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { AlertCircle, CheckCircle2, ChevronDown, FileText, LoaderCircle, RotateCcw, Upload } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ChevronDown, Copy, Download, FileText, LoaderCircle, RotateCcw, Upload } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
-import { createMockAnalysis, type AnalysisResult } from './lib/analysis'
+import { analysisResultSchema, createMockAnalysis, formatAnalysisResult, type AnalysisResult } from './lib/analysis'
 import { isLikelyPdf, MAX_ANALYSIS_CHARS, MAX_RAW_CHARS, prepareDocument } from './lib/document'
 import { extractPdfText } from './lib/pdf'
 import { analyzeReferences } from './lib/references'
@@ -45,6 +45,11 @@ const draftSchema = z.object({
   templateId: z.string(),
   rubric: z.array(rubricSectionSchema),
 })
+const apiErrorSchema = z.object({
+  error: z.string().trim().min(1),
+  code: z.string().optional(),
+  retryable: z.boolean().optional(),
+})
 type Draft = z.infer<typeof draftSchema>
 
 export type AnalysisState = 'idle' | 'input' | 'preview' | 'editing' | 'ready' | 'analyzing' | 'result' | 'error'
@@ -58,11 +63,23 @@ const analysisSteps = ['ตรวจขนาดเอกสาร', 'เตร�
 
 function getAnonymousToken() {
   const key = 'report-checker-anonymous-token'
-  const existing = window.localStorage.getItem(key)
-  if (existing) return existing
   const token = crypto.randomUUID()
-  window.localStorage.setItem(key, token)
+  try {
+    const existing = window.localStorage.getItem(key)
+    if (existing) return existing
+    window.localStorage.setItem(key, token)
+  } catch {
+    // Browsers can block storage in strict privacy modes. A session-only token still allows analysis.
+  }
   return token
+}
+
+function removeStoredDraft() {
+  try { window.sessionStorage.removeItem(DRAFT_KEY) } catch { /* Storage may be unavailable. */ }
+}
+
+function saveDraft(draft: Draft) {
+  try { window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)) } catch { /* Keep the in-memory form usable. */ }
 }
 
 function loadDraft(): Draft {
@@ -72,7 +89,7 @@ function loadDraft(): Draft {
     const parsed = draftSchema.safeParse(saved ? JSON.parse(saved) : null)
     if (parsed.success) return parsed.data
   } catch {
-    window.sessionStorage.removeItem(DRAFT_KEY)
+    removeStoredDraft()
   }
   return { reportText: '', templateId: fallback.id, rubric: fallback.sections }
 }
@@ -89,6 +106,8 @@ function App() {
   const [progressIndex, setProgressIndex] = useState(0)
   const [analysisMessage, setAnalysisMessage] = useState<string | null>(null)
   const [analysisCanRetry, setAnalysisCanRetry] = useState(false)
+  const [resultActionMessage, setResultActionMessage] = useState<string | null>(null)
+  const [anonymousToken] = useState(getAnonymousToken)
   const [templateId, setTemplateId] = useState(initialDraft.templateId)
   const [rubric, setRubric] = useState<RubricSection[]>(initialDraft.rubric)
   const [showAdvancedRubric, setShowAdvancedRubric] = useState(false)
@@ -116,7 +135,15 @@ function App() {
   const exceedsRawLimit = text.length > MAX_RAW_CHARS
   const exceedsAnalysisLimit = preparedDocument.mainText.length > MAX_ANALYSIS_CHARS
   const isTooShort = preparedDocument.mainText.trim().length > 0 && preparedDocument.mainText.trim().length < 100
-  const canAnalyze = Boolean(preparedDocument.mainText.trim()) && !exceedsRawLimit && !exceedsAnalysisLimit && !isExtracting && state !== 'analyzing' && rubricValidation.success
+  const controlsLocked = state === 'analyzing' || isExtracting
+  const canAnalyze = Boolean(preparedDocument.mainText.trim()) && !exceedsRawLimit && !exceedsAnalysisLimit && !controlsLocked && state !== 'result' && rubricValidation.success
+  const priorityItems = useMemo(() => {
+    if (!result) return []
+    return [...result.sections]
+      .sort((left, right) => left.score - right.score || right.weight - left.weight)
+      .flatMap((section) => section.missing.map((missing) => ({ section: section.title, missing, recommendation: section.recommendation })))
+      .slice(0, 6)
+  }, [result])
 
   useEffect(() => () => {
     if (timeoutRef.current) window.clearTimeout(timeoutRef.current)
@@ -127,8 +154,8 @@ function App() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      if (!text.trim()) window.sessionStorage.removeItem(DRAFT_KEY)
-      else window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ reportText: text, templateId, rubric }))
+      if (!text.trim()) removeStoredDraft()
+      else saveDraft({ reportText: text, templateId, rubric })
     }, 300)
     return () => window.clearTimeout(timer)
   }, [text, templateId, rubric])
@@ -160,10 +187,11 @@ function App() {
     })
   }, [state])
 
-  const markContentChanged = () => {
-    if (state !== 'analyzing') setState('input')
+  const markContentChanged = (nextText: string) => {
+    if (state !== 'analyzing') setState(nextText.trim() ? 'input' : 'idle')
     setResult(null)
     setAnalysisMessage(null)
+    setResultActionMessage(null)
     setAppendixConfirmed(false)
     idempotencyKeyRef.current = null
   }
@@ -274,6 +302,7 @@ function App() {
     setResult(null)
     setAnalysisMessage(null)
     setAnalysisCanRetry(false)
+    setResultActionMessage(null)
     setProgressIndex(0)
     progressTimerRef.current = window.setInterval(() => setProgressIndex((current) => Math.min(current + 1, analysisSteps.length - 2)), 1_500)
     timeoutRef.current = window.setTimeout(() => {
@@ -296,26 +325,32 @@ function App() {
           headers: { 'content-type': 'application/json', 'Idempotency-Key': idempotencyKeyRef.current },
           body: JSON.stringify({
             reportText: text,
-            anonymousToken: getAnonymousToken(),
+            anonymousToken,
             rubric: { version: rubricVersion, sections: rubric },
             referenceSummary: referenceSummary.aiSummary,
             documentOptions: { excludeAppendix: Boolean(preparedDocument.appendixHeading && excludeAppendix) },
           }),
         })
         const rawPayload = await response.text()
-        let payload: (AnalysisResult & { error?: string; code?: string; retryable?: boolean }) | null = null
-        try { payload = JSON.parse(rawPayload) as AnalysisResult & { error?: string; code?: string; retryable?: boolean } } catch { payload = null }
-        if (!response.ok || !payload || payload.error) {
-          const message = payload?.error ?? 'ระบบตอบกลับในรูปแบบที่อ่านไม่ได้ โปรดลองใหม่ภายหลัง'
+        let payload: unknown
+        try { payload = JSON.parse(rawPayload) as unknown } catch { payload = undefined }
+        const parsedError = apiErrorSchema.safeParse(payload)
+        if (!response.ok || parsedError.success) {
+          const message = parsedError.success ? parsedError.data.error : 'ระบบตอบกลับในรูปแบบที่อ่านไม่ได้ โปรดลองใหม่ภายหลัง'
           const error = new Error(message) as Error & { retryable?: boolean }
-          error.retryable = payload?.retryable ?? response.status >= 500
+          error.retryable = parsedError.success ? (parsedError.data.retryable ?? response.status >= 500) : response.status >= 500
           throw error
         }
-        setResult(payload)
+        const parsedResult = analysisResultSchema.safeParse(payload)
+        if (!parsedResult.success) {
+          const error = new Error('ผลตอบกลับจากระบบยังไม่ครบถ้วน โปรดลองใหม่อีกครั้ง') as Error & { retryable?: boolean }
+          error.retryable = true
+          throw error
+        }
+        setResult(parsedResult.data)
       }
       setProgressIndex(analysisSteps.length - 1)
       setState('result')
-      window.sessionStorage.removeItem(DRAFT_KEY)
     } catch (error) {
       if (controller.signal.aborted) {
         setState('ready')
@@ -364,6 +399,7 @@ function App() {
   }
 
   const clearDraft = () => {
+    if (controlsLocked) return
     if (text.trim() && !window.confirm('ล้างข้อความและการตั้งค่าทั้งหมดในแท็บนี้หรือไม่?')) return
     const fallback = cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID)
     reset({ reportText: '' })
@@ -376,9 +412,40 @@ function App() {
     setWarnings([])
     setAppendixConfirmed(false)
     setAnalysisMessage(null)
+    setResultActionMessage(null)
     idempotencyKeyRef.current = null
-    window.sessionStorage.removeItem(DRAFT_KEY)
+    removeStoredDraft()
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const prepareNewAnalysis = () => {
+    idempotencyKeyRef.current = null
+    setResult(null)
+    setResultActionMessage(null)
+    setState('ready')
+    window.requestAnimationFrame(() => editorRef.current?.focus())
+  }
+
+  const copyResult = async () => {
+    if (!result) return
+    try {
+      await navigator.clipboard.writeText(formatAnalysisResult(result))
+      setResultActionMessage('คัดลอกผลตรวจแล้ว')
+    } catch {
+      setResultActionMessage('เบราว์เซอร์ไม่อนุญาตให้คัดลอกอัตโนมัติ กรุณาใช้ปุ่มดาวน์โหลดแทน')
+    }
+  }
+
+  const downloadResult = () => {
+    if (!result) return
+    const blob = new Blob([formatAnalysisResult(result)], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `ผลตรวจรายงาน-${new Date().toISOString().slice(0, 10)}.txt`
+    anchor.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+    setResultActionMessage('ดาวน์โหลดผลตรวจแล้ว')
   }
 
   return (
@@ -386,12 +453,12 @@ function App() {
       <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
         <header className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="sr-only">ตรวจรายงานด้วย AI</h1>
-            <p className="max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ สิ่งที่อาจขาด และแนวทางปรับปรุง</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">ตรวจรายงานด้วย AI</h1>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7">วางข้อความหรือเลือก PDF แล้วกดตรวจได้ทันที ระบบจะบอกส่วนที่พบ ข้อมูลหรือหลักฐานที่อาจยังขาด และแนวทางปรับปรุง</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="outline" className="w-fit" aria-live="polite">สถานะ: {stateLabels[state]}</Badge>
-            {text.trim() && <Button type="button" size="sm" variant="ghost" onClick={clearDraft}><RotateCcw />เริ่มใหม่</Button>}
+            {text.trim() && <Button type="button" size="sm" variant="ghost" onClick={clearDraft} disabled={controlsLocked}><RotateCcw />เริ่มใหม่</Button>}
           </div>
         </header>
 
@@ -411,7 +478,7 @@ function App() {
                   id="report-text" aria-label="ข้อความรายงาน" className="h-64 resize-none overflow-y-scroll leading-6 sm:h-80"
                   placeholder="วางเนื้อหารายงานที่นี่…" {...reportTextField}
                   ref={(element) => { reportTextField.ref(element); editorRef.current = element }}
-                  onChange={(event) => { reportTextField.onChange(event); markContentChanged() }}
+                  onChange={(event) => { reportTextField.onChange(event); markContentChanged(event.target.value) }}
                   disabled={state === 'analyzing' || isExtracting}
                 />
                 <div className="flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:justify-between sm:gap-4">
@@ -435,7 +502,7 @@ function App() {
                 <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={startAnalysis} disabled={!canAnalyze}><CheckCircle2 />ตรวจรายงาน</Button>
                 {!text.trim() && <p className="text-sm text-slate-500">วางข้อความหรือเลือก PDF ก่อน ปุ่มนี้จึงจะกดได้</p>}
                 {text.trim() && !rubricValidation.success && <p className="text-sm text-red-700">โปรดแก้เกณฑ์การตรวจให้ถูกต้องก่อนส่ง</p>}
-                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
+                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร และอาจพักผลสำเร็จไว้ไม่เกิน 10 นาทีเพื่อป้องกันการส่งซ้ำ <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
               </div>
             </CardContent>
           </Card>
@@ -445,20 +512,20 @@ function App() {
           <CardHeader><CardTitle>ตั้งค่าเพิ่มเติม — เกณฑ์การตรวจ</CardTitle><CardDescription>ไม่จำเป็นต้องแก้ ใช้ค่าเริ่มต้นแล้วกดตรวจได้ทันที หรือปรับหัวข้อและน้ำหนักเมื่อต้องการ</CardDescription></CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,24rem)_auto] sm:items-end">
-              <label className="flex flex-col gap-2 text-sm font-medium" htmlFor="rubric-template">รูปแบบรายงาน<select id="rubric-template" className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-base" value={templateId} onChange={(event) => selectTemplate(event.target.value)}>{rubricTemplates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
+              <label className="flex flex-col gap-2 text-sm font-medium" htmlFor="rubric-template">รูปแบบรายงาน<select id="rubric-template" className="h-11 rounded-lg border border-slate-300 bg-white px-3 text-base disabled:cursor-not-allowed disabled:opacity-50" value={templateId} onChange={(event) => selectTemplate(event.target.value)} disabled={controlsLocked}>{rubricTemplates.map((template) => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
               <div className="flex flex-wrap gap-2"><Badge variant="outline">ใช้ {rubric.filter((section) => section.enabled).length}/{rubric.length} หัวข้อ</Badge><Badge variant="outline">น้ำหนักรวม {Number.isFinite(enabledWeight) ? enabledWeight : 'ไม่ถูกต้อง'}</Badge></div>
             </div>
             <Button type="button" variant="outline" aria-expanded={showAdvancedRubric} onClick={() => setShowAdvancedRubric((value) => !value)}><ChevronDown className={showAdvancedRubric ? 'rotate-180 transition-transform' : 'transition-transform'} />{showAdvancedRubric ? 'ซ่อนการตั้งค่าขั้นสูง' : 'แก้ไขหัวข้อและน้ำหนัก'}</Button>
             {showAdvancedRubric && <div className="space-y-3" aria-label="การตั้งค่าเกณฑ์ขั้นสูง">
               {rubric.map((section) => <div key={section.id} className={`rounded-lg border p-4 ${section.enabled ? 'bg-white' : 'bg-slate-100 opacity-75'}`}>
                 <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_7rem_auto] lg:items-start">
-                  <label className="space-y-1 text-sm font-medium text-slate-600"><span>ชื่อหัวข้อ</span><Input aria-label={`ชื่อหัวข้อ ${section.title}`} value={section.title} onChange={(event) => updateSection(section.id, { title: event.target.value })} /></label>
-                  <label className="space-y-1 text-sm font-medium text-slate-600"><span>สิ่งที่ต้องการตรวจ</span><Textarea aria-label={`เกณฑ์ ${section.title}`} className="min-h-24" value={section.criteria} onChange={(event) => updateSection(section.id, { criteria: event.target.value })} /></label>
-                  <label className="space-y-1 text-sm font-medium text-slate-600"><span>น้ำหนัก</span><Input aria-label={`น้ำหนัก ${section.title}`} type="number" min="0" step="0.5" value={Number.isNaN(section.weight) ? '' : section.weight} onChange={(event) => updateSection(section.id, { weight: event.target.valueAsNumber })} /></label>
-                  <div className="flex flex-wrap gap-2 lg:pt-7"><Button type="button" size="sm" variant={section.enabled ? 'outline' : 'secondary'} onClick={() => updateSection(section.id, { enabled: !section.enabled })}>{section.enabled ? 'ไม่นำมาคิดคะแนน' : 'นำมาคิดคะแนน'}</Button><Button type="button" size="sm" variant="destructive" aria-label={`ลบ ${section.title}`} onClick={() => removeSection(section)}>ลบหัวข้อ</Button></div>
+                  <label className="space-y-1 text-sm font-medium text-slate-600"><span>ชื่อหัวข้อ</span><Input aria-label={`ชื่อหัวข้อ ${section.title}`} value={section.title} onChange={(event) => updateSection(section.id, { title: event.target.value })} disabled={controlsLocked} /></label>
+                  <label className="space-y-1 text-sm font-medium text-slate-600"><span>สิ่งที่ต้องการตรวจ</span><Textarea aria-label={`เกณฑ์ ${section.title}`} className="min-h-24" value={section.criteria} onChange={(event) => updateSection(section.id, { criteria: event.target.value })} disabled={controlsLocked} /></label>
+                  <label className="space-y-1 text-sm font-medium text-slate-600"><span>น้ำหนัก</span><Input aria-label={`น้ำหนัก ${section.title}`} type="number" min="0" max="100" step="0.5" value={Number.isNaN(section.weight) ? '' : section.weight} onChange={(event) => updateSection(section.id, { weight: event.target.valueAsNumber })} disabled={controlsLocked} /></label>
+                  <div className="flex flex-wrap gap-2 lg:pt-7"><Button type="button" size="sm" variant={section.enabled ? 'outline' : 'secondary'} onClick={() => updateSection(section.id, { enabled: !section.enabled })} disabled={controlsLocked}>{section.enabled ? 'ไม่นำมาคิดคะแนน' : 'นำมาคิดคะแนน'}</Button><Button type="button" size="sm" variant="destructive" aria-label={`ลบ ${section.title}`} onClick={() => removeSection(section)} disabled={controlsLocked}>ลบหัวข้อ</Button></div>
                 </div>
               </div>)}
-              <Button type="button" variant="outline" onClick={addSection}>เพิ่มหัวข้อใหม่</Button>
+              <Button type="button" variant="outline" onClick={addSection} disabled={controlsLocked || rubric.length >= 30}>เพิ่มหัวข้อใหม่</Button>
             </div>}
             {!rubricValidation.success && <Alert className="border-red-200 bg-red-50 text-red-950"><AlertCircle className="size-4" /><AlertTitle>เกณฑ์ยังไม่พร้อม</AlertTitle><AlertDescription>{rubricValidation.error.issues.map((issue) => issue.message).join(' · ')}</AlertDescription></Alert>}
           </CardContent>
@@ -469,9 +536,10 @@ function App() {
         {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={startAnalysis}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
 
         {state === 'result' && result && <section ref={resultRef} tabIndex={-1} className="mt-5 scroll-mt-4 space-y-5 outline-none" aria-label="ผลวิเคราะห์">
-          <Card className="border-emerald-200"><CardHeader><CardTitle>ผลตรวจเบื้องต้น</CardTitle><CardDescription>โมเดล {result.model} · เกณฑ์รุ่น {result.rubricVersion}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยโค้ดจากหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">{result.sections.length} หัวข้อ</Badge><Button variant="outline" onClick={() => { setResult(null); setState('ready') }}>ตรวจอีกครั้ง</Button></div></CardContent></Card>
+          <Card className="border-emerald-200"><CardHeader><CardTitle>ผลตรวจเบื้องต้น</CardTitle><CardDescription>โมเดล {result.model} · เกณฑ์รุ่น {result.rubricVersion}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยโค้ดจากหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">{result.sections.length} หัวข้อ</Badge><Button variant="outline" onClick={copyResult}><Copy />คัดลอกผล</Button><Button variant="outline" onClick={downloadResult}><Download />ดาวน์โหลด .txt</Button><Button variant="outline" onClick={prepareNewAnalysis}>แก้ไขแล้วตรวจใหม่</Button></div></div>{resultActionMessage && <p className="text-sm text-indigo-700" aria-live="polite">{resultActionMessage}</p>}</CardContent></Card>
           <Alert className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>AI อาจคลาดเคลื่อน</AlertTitle><AlertDescription>ใช้ผลนี้ช่วยทบทวนงาน ไม่ใช่คำตัดสินแทนอาจารย์ และไม่ใช่ผลตรวจลอกเลียนผลงาน</AlertDescription></Alert>
-          <div className="grid gap-4 lg:grid-cols-2">{result.sections.map((section) => <Card key={section.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{section.title}</CardTitle><CardDescription>น้ำหนัก {section.weight} · ความมั่นใจของ AI {Math.round(section.confidence * 100)}%</CardDescription></div><Badge>{section.score}/3</Badge></div></CardHeader><CardContent className="space-y-3 text-sm"><div><p className="font-medium">เหตุผล</p><p className="mt-1 leading-6 text-slate-600">{section.reason}</p></div><div><p className="font-medium">หลักฐานที่พบ</p>{section.evidence.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">ยังไม่พบหลักฐานชัดเจน</p>}</div><div><p className="font-medium">สิ่งที่อาจขาด</p>{section.missing.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.missing.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">AI ไม่ได้ระบุสิ่งที่ขาด</p>}</div><div><p className="font-medium">คำแนะนำ</p><p className="mt-1 leading-6 text-slate-600">{section.recommendation}</p></div></CardContent></Card>)}</div>
+          <Card><CardHeader><CardTitle>สิ่งที่ควรแก้ก่อนส่ง</CardTitle><CardDescription>เรียงจากหัวข้อคะแนนต่ำและน้ำหนักสูงก่อน ตรวจยืนยันกับรายงานต้นฉบับทุกครั้ง</CardDescription></CardHeader><CardContent>{priorityItems.length ? <ol className="space-y-3 text-sm">{priorityItems.map((item, index) => <li key={`${item.section}-${item.missing}`} className="rounded-lg border bg-slate-50 p-3"><p className="font-medium text-slate-900">{index + 1}. {item.section}</p><p className="mt-1 leading-6 text-slate-700">อาจยังขาด: {item.missing}</p><p className="mt-1 leading-6 text-indigo-800">ควรทำ: {item.recommendation}</p></li>)}</ol> : <p className="text-sm leading-6 text-slate-600">AI ไม่พบประเด็นที่ขาดอย่างชัดเจนจากข้อความที่ส่ง แต่ยังควรตรวจเทียบกับเกณฑ์รายวิชาและไฟล์ต้นฉบับ</p>}</CardContent></Card>
+          <div className="grid gap-4 lg:grid-cols-2">{result.sections.map((section) => <Card key={section.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{section.title}</CardTitle><CardDescription>น้ำหนัก {section.weight} · ความมั่นใจของ AI {Math.round(section.confidence * 100)}%</CardDescription></div><Badge>{section.score}/3</Badge></div></CardHeader><CardContent className="space-y-3 text-sm"><div><p className="font-medium">เหตุผล</p><p className="mt-1 leading-6 text-slate-600">{section.reason}</p></div><div><p className="font-medium">หลักฐานที่พบ</p>{section.evidence.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.evidence.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">ยังไม่พบหลักฐานชัดเจนในข้อความที่ส่ง</p>}</div><div><p className="font-medium">ข้อมูลหรือหลักฐานที่อาจยังขาด</p>{section.missing.length ? <ul className="mt-1 list-disc space-y-1 pl-5 leading-6 text-slate-600">{section.missing.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1 text-slate-500">AI ไม่พบประเด็นที่ขาดจากข้อความที่ส่ง</p>}</div><div><p className="font-medium">คำแนะนำ</p><p className="mt-1 leading-6 text-slate-600">{section.recommendation}</p></div></CardContent></Card>)}</div>
           <div className="grid gap-6 lg:grid-cols-2"><Card><CardHeader><CardTitle>ความสอดคล้องระหว่างบท</CardTitle><CardDescription>วัตถุประสงค์ · วิธีดำเนินงาน · ผล · สรุปผล</CardDescription></CardHeader><CardContent>{result.consistencyNotes.length ? <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-slate-700">{result.consistencyNotes.map((note) => <li key={note}>{note}</li>)}</ul> : <p className="text-sm text-slate-500">AI ไม่ได้ระบุข้อสังเกตเพิ่มเติม</p>}</CardContent></Card><Card><CardHeader><CardTitle>เอกสารอ้างอิง</CardTitle><CardDescription>ผลตรวจรูปแบบเบื้องต้น โปรดยืนยันกับเกณฑ์รายวิชา</CardDescription></CardHeader><CardContent className="space-y-3 text-sm leading-6 text-slate-700"><p>{result.referenceComment}</p>{referenceSummary.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5">{referenceSummary.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</CardContent></Card></div>
           {result.qualityWarnings.length > 0 && <Card><CardHeader><CardTitle>คำเตือนคุณภาพข้อความ</CardTitle></CardHeader><CardContent><ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-slate-700">{result.qualityWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></CardContent></Card>}
         </section>}

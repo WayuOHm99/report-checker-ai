@@ -40,10 +40,13 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('a user sends text for mock analysis with one primary click', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: 'ตรวจรายงานด้วย AI', level: 1 })).toBeVisible()
   await page.getByLabel('ข้อความรายงาน').fill('บทนำ\nรายงานทดสอบสำหรับ browser smoke test ซึ่งมีรายละเอียดเพียงพอสำหรับตรวจเส้นทางการใช้งานตั้งแต่ต้นจนจบ')
   await page.getByRole('button', { name: 'ตรวจรายงาน' }).click()
   await expect(page.getByRole('region', { name: 'ผลวิเคราะห์' })).toBeVisible()
   await expect(page.getByText('AI อาจคลาดเคลื่อน', { exact: true })).toBeVisible()
+  await expect(page.getByText('สิ่งที่ควรแก้ก่อนส่ง')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'ดาวน์โหลด .txt' })).toBeVisible()
 })
 
 test('the simple flow has no age gate and advanced settings stay collapsed by default', async ({ page }) => {

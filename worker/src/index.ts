@@ -21,14 +21,14 @@ const rubricSectionSchema = z.object({
   id: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(120),
   criteria: z.string().trim().min(1).max(2_000),
-  weight: z.number().finite().nonnegative(),
+  weight: z.number().finite().nonnegative().max(100),
   enabled: z.boolean(),
-})
+}).strict()
 
 const rubricSchema = z.object({
   version: z.string().trim().min(1).max(100),
   sections: z.array(rubricSectionSchema).min(1).max(30),
-}).superRefine(({ sections }, context) => {
+}).strict().superRefine(({ sections }, context) => {
   const ids = new Set<string>()
   sections.forEach((section, index) => {
     if (ids.has(section.id)) context.addIssue({ code: 'custom', path: ['sections', index, 'id'], message: `rubric id ซ้ำ: ${section.id}` })
@@ -43,22 +43,22 @@ const requestSchema = z.object({
   referenceSummary: z.object({
     bibliographyDetected: z.boolean(), bibliographyEntryCount: z.number().int().nonnegative(), numericCitationCount: z.number().int().nonnegative(),
     authorYearCitationCount: z.number().int().nonnegative(), unmatchedNumericCitationCount: z.number().int().nonnegative(), potentiallyUncitedEntryCount: z.number().int().nonnegative(),
-  }),
-  documentOptions: z.object({ excludeAppendix: z.boolean() }).optional().default({ excludeAppendix: false }),
-})
+  }).strict(),
+  documentOptions: z.object({ excludeAppendix: z.boolean() }).strict().optional().default({ excludeAppendix: false }),
+}).strict()
 
 const analysisSectionSchema = z.object({
   id: z.string().trim().min(1).max(100), score: z.number().int().min(0).max(3),
-  reason: z.string().trim().min(1).max(2_000), evidence: z.array(z.string().max(1_000)).max(3),
-  missing: z.array(z.string().max(1_000)).max(3), recommendation: z.string().trim().min(1).max(2_000),
+  reason: z.string().trim().min(1).max(2_000), evidence: z.array(z.string().trim().min(1).max(1_000)).max(3),
+  missing: z.array(z.string().trim().min(1).max(1_000)).max(3), recommendation: z.string().trim().min(1).max(2_000),
   confidence: z.number().min(0).max(1),
-})
+}).strict()
 const modelResponseSchema = z.object({
   sections: z.array(analysisSectionSchema).min(1).max(30),
-  qualityWarnings: z.array(z.string().max(1_000)).max(5),
-  consistencyNotes: z.array(z.string().max(1_000)).max(5),
-  referenceComment: z.string().max(2_000),
-})
+  qualityWarnings: z.array(z.string().trim().min(1).max(1_000)).max(5),
+  consistencyNotes: z.array(z.string().trim().min(1).max(1_000)).max(5),
+  referenceComment: z.string().trim().min(1).max(2_000),
+}).strict()
 
 type ModelResponse = z.infer<typeof modelResponseSchema>
 type ActiveSection = ReturnType<typeof sanitizeRubric>[number]
@@ -210,10 +210,12 @@ function mergeChunkResponses(responses: ModelResponse[], activeSections: ActiveS
   const sections = activeSections.map((active) => {
     const candidates = responses.map((response) => response.sections.find((section) => section.id === active.id)).filter((section): section is ModelResponse['sections'][number] => Boolean(section))
     const strongest = [...candidates].sort((left, right) => right.score - left.score || right.confidence - left.confidence)[0]
+    const strongestScore = strongest.score
+    const strongestCandidates = candidates.filter((candidate) => candidate.score === strongestScore)
     return {
       ...strongest,
       evidence: uniqueLimited(candidates.flatMap((candidate) => candidate.evidence), 3),
-      missing: uniqueLimited(candidates.flatMap((candidate) => candidate.missing), 3),
+      missing: uniqueLimited(strongestCandidates.flatMap((candidate) => candidate.missing), 3),
       confidence: Math.max(...candidates.map((candidate) => candidate.confidence)),
     }
   })
@@ -235,7 +237,7 @@ function mapGeminiError(error: unknown) {
 
 async function generateValidated(ai: GoogleGenAI, model: string, prompt: string, activeSections: ActiveSection[]) {
   const generate = async (contents: string) => {
-    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction: SYSTEM_INSTRUCTION, temperature: 0, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
+    const response = await ai.models.generateContent({ model, contents, config: { systemInstruction: SYSTEM_INSTRUCTION, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA } })
     return response.text ?? ''
   }
   try {
@@ -340,8 +342,12 @@ export default {
     const url = new URL(request.url)
     let response: Response
     try {
-      if (request.method === 'OPTIONS') response = new Response(null, { status: 204, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
-      else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
+      if (request.method === 'OPTIONS' && url.pathname === '/api/analyze') response = new Response(null, { status: 204, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
+      else if (request.method === 'GET' && url.pathname === '/api/health') {
+        const ready = Boolean(env.GEMINI_API_KEY && env.RATE_LIMIT && env.MOCK_ANALYSIS !== 'true')
+        response = json({ status: ready ? 'ok' : 'degraded', aiConfigured: Boolean(env.GEMINI_API_KEY), rateLimitConfigured: Boolean(env.RATE_LIMIT), model: env.GEMINI_MODEL ?? 'gemini-3.6-flash' }, ready ? 200 : 503)
+      } else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
+      else if (url.pathname === '/api/analyze') response = new Response(JSON.stringify({ error: 'endpoint นี้รองรับเฉพาะ POST', code: 'METHOD_NOT_ALLOWED', retryable: false }), { status: 405, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else response = errorResponse(new ApiFailure('NOT_FOUND', 'ไม่พบ endpoint ที่เรียกใช้', 404))
     } catch (error) {
       const failure = error instanceof ApiFailure ? error : new ApiFailure('INTERNAL_ERROR', 'ระบบเกิดข้อผิดพลาดที่ไม่คาดคิด โปรดลองใหม่ภายหลัง', 500, true)

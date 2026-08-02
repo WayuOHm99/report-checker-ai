@@ -50,6 +50,20 @@ describe('POST /api/analyze', () => {
     expect(response.status).toBe(415)
   })
 
+  it('reports whether production dependencies are configured without exposing secrets', async () => {
+    const response = await worker.fetch(new Request('https://local.test/api/health'), {
+      GEMINI_API_KEY: 'configured-secret', GEMINI_MODEL: 'test-model', MOCK_ANALYSIS: 'false', RATE_LIMIT: new MemoryKv(),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ status: 'ok', aiConfigured: true, rateLimitConfigured: true, model: 'test-model' })
+  })
+
+  it('returns method not allowed for a GET request to the analysis endpoint', async () => {
+    const response = await worker.fetch(new Request('https://local.test/api/analyze'), { MOCK_ANALYSIS: 'true' })
+    expect(response.status).toBe(405)
+    expect(response.headers.get('allow')).toBe('POST, OPTIONS')
+  })
+
   it('enforces the IP and anonymous-token request limit when KV is configured', async () => {
     const rateLimit = new MemoryKv()
     const env = { MOCK_ANALYSIS: 'true', RATE_LIMIT: rateLimit } satisfies AnalysisEnv
@@ -68,14 +82,14 @@ describe('POST /api/analyze', () => {
   })
 
   it('allows browser CORS only for the configured Pages origins', async () => {
-    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://report-checker-ai.pages.dev,https://reportzcheckxai.pages.dev' } satisfies AnalysisEnv
-    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://report-checker-ai.pages.dev' } }), env)
-    const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.report-checker-ai.pages.dev' } }), env)
-    const newPagesDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportzcheckxai.pages.dev' } }), env)
+    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://reportcheckxd.pages.dev' } satisfies AnalysisEnv
+    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportcheckxd.pages.dev' } }), env)
+    const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.reportcheckxd.pages.dev' } }), env)
+    const oldPagesDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportzcheckxai.pages.dev' } }), env)
     const rejected = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example' } }), env)
-    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://report-checker-ai.pages.dev')
-    expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.report-checker-ai.pages.dev')
-    expect(newPagesDomain.headers.get('access-control-allow-origin')).toBe('https://reportzcheckxai.pages.dev')
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://reportcheckxd.pages.dev')
+    expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.reportcheckxd.pages.dev')
+    expect(oldPagesDomain.headers.get('access-control-allow-origin')).toBeNull()
     expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
   })
 
@@ -97,6 +111,12 @@ describe('POST /api/analyze', () => {
     expect((await response.json() as { code: string }).code).toBe('INVALID_REQUEST')
   })
 
+  it('rejects unreasonable rubric weights before calculating a score', async () => {
+    const excessiveWeight = { ...body, rubric: { ...body.rubric, sections: [{ ...body.rubric.sections[0], weight: 101 }] } }
+    const response = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': 'excessive-weight-key' }, body: JSON.stringify(excessiveWeight) }), { MOCK_ANALYSIS: 'true' })
+    expect(response.status).toBe(400)
+  })
+
   it('retries Gemini exactly once when the first JSON response is incomplete', async () => {
     sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
     sdkMocks.generateContent
@@ -113,6 +133,7 @@ describe('POST /api/analyze', () => {
     })
     expect(response.status).toBe(200)
     expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
+    expect(sdkMocks.generateContent.mock.calls[0][0].config).not.toHaveProperty('temperature')
   })
 
   it('returns a safe error after the single JSON retry also fails', async () => {

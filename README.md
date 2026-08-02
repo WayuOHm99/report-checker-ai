@@ -48,6 +48,8 @@ E2E รันบน Chromium desktop, Chrome mobile, Firefox และ WebKit �
 - ผู้ใช้เลือกเทมเพลต เพิ่ม/ลบ/ปิดหัวข้อ แก้เกณฑ์และน้ำหนักได้ โดยค่าขั้นสูงถูกพับไว้ตามค่าเริ่มต้น
 - คะแนนรวมคำนวณด้วยโค้ด หัวข้อปิดถูกตัดจากทั้งตัวเศษและตัวหาร
 - AI ต้องส่ง rubric id ครบ ไม่ซ้ำ และตรงกับหัวข้อที่เปิด มิฉะนั้นระบบ retry JSON เพียง 1 ครั้ง
+- ตรวจ schema ของผลตอบกลับซ้ำใน browser ก่อนแสดง ป้องกันผลไม่ครบหรือข้อมูลผิดรูปแบบ
+- สรุป “สิ่งที่ควรแก้ก่อนส่ง” จากหัวข้อคะแนนต่ำและน้ำหนักสูง พร้อมคัดลอกหรือดาวน์โหลดผลเป็นไฟล์ข้อความ
 - มี progress โดยประมาณ, ป้องกันกดซ้ำ, timeout 2 นาที, cancel และ retry ด้วย idempotency key เดิม
 - ร่างถูกเก็บเฉพาะ `sessionStorage` ของแท็บและมีคำเตือนก่อนออกจากหน้า ไม่มีการเก็บรายงานต้นฉบับบนเซิร์ฟเวอร์
 
@@ -63,11 +65,11 @@ npx wrangler secret put GEMINI_API_KEY
 
 ## Production ที่มีอยู่
 
-- Pages: https://reportzcheckxai.pages.dev
+- Pages: https://reportcheckxd.pages.dev
 - Worker: https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze
 - Model config: `gemini-3.6-flash`
 
-Production ใช้ Cloudflare Pages และ Worker จริง โดย production build จะชี้ Worker สาธารณะอัตโนมัติ ส่วน local development จะใช้ mock เป็นค่าเริ่มต้น การเปลี่ยน Worker ต้องรัน `npm run worker:types` หลังแก้ binding/config และต้องได้รับการยืนยันก่อน deploy production
+Production ใช้ Cloudflare Pages และ Worker จริง โดย production build จะชี้ Worker สาธารณะอัตโนมัติ ส่วน local development จะใช้ mock เป็นค่าเริ่มต้น หลังแก้ binding/config ต้องรัน `npm run worker:types` และ `npm run worker:check` ก่อน deploy
 
 ## ความเป็นส่วนตัวและความปลอดภัย
 

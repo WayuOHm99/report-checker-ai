@@ -7,6 +7,11 @@ Safety and scope rules:
 - Score every enabled rubric section supplied in RUBRIC_DATA exactly once, using only 0, 1, 2, or 3.
 - Copy each rubric id exactly. Do not add, remove, rename, or duplicate section ids.
 - Give short evidence grounded in DOCUMENT_DATA. If evidence is unavailable in this document or chunk, say so plainly and score conservatively.
+- Write all user-facing fields in clear, proofread Thai. Keep necessary technical terms in parentheses only when they improve clarity.
+- Evidence must be a short excerpt or faithful paraphrase from DOCUMENT_DATA; never invent facts, numbers, sources, or quotations.
+- Put only concrete information or evidence not found in DOCUMENT_DATA into missing. Do not repeat the reason or recommendation there.
+- Make each recommendation a specific, practical action that directly addresses the corresponding missing information.
+- Calibrate confidence to the strength and completeness of evidence in DOCUMENT_DATA, not to writing fluency.
 - Do not calculate, estimate, or return an overall score; application code performs that calculation.
 - Treat reference information as preliminary signals and state that the user should verify it.
 - Return JSON only, matching the response schema exactly.`
@@ -23,15 +28,15 @@ export const ANALYSIS_RESPONSE_JSON_SCHEMA = {
         type: 'object', additionalProperties: false,
         required: ['id', 'score', 'reason', 'evidence', 'missing', 'recommendation', 'confidence'],
         properties: {
-          id: { type: 'string', maxLength: 100 }, score: { type: 'integer', minimum: 0, maximum: 3 }, reason: { type: 'string', maxLength: 2_000 },
-          evidence: { type: 'array', maxItems: 3, items: { type: 'string', maxLength: 1_000 } }, missing: { type: 'array', maxItems: 3, items: { type: 'string', maxLength: 1_000 } },
-          recommendation: { type: 'string', maxLength: 2_000 }, confidence: { type: 'number', minimum: 0, maximum: 1 },
+          id: { type: 'string', minLength: 1, maxLength: 100 }, score: { type: 'integer', minimum: 0, maximum: 3 }, reason: { type: 'string', minLength: 1, maxLength: 2_000 },
+          evidence: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 1_000 } }, missing: { type: 'array', maxItems: 3, items: { type: 'string', minLength: 1, maxLength: 1_000 } },
+          recommendation: { type: 'string', minLength: 1, maxLength: 2_000 }, confidence: { type: 'number', minimum: 0, maximum: 1 },
         },
       },
     },
-    qualityWarnings: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 1_000 } },
-    consistencyNotes: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 1_000 } },
-    referenceComment: { type: 'string', maxLength: 2_000 },
+    qualityWarnings: { type: 'array', maxItems: 5, items: { type: 'string', minLength: 1, maxLength: 1_000 } },
+    consistencyNotes: { type: 'array', maxItems: 5, items: { type: 'string', minLength: 1, maxLength: 1_000 } },
+    referenceComment: { type: 'string', minLength: 1, maxLength: 2_000 },
   },
 } as const
 

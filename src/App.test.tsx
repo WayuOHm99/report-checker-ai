@@ -3,19 +3,30 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
+import { createMockAnalysis } from './lib/analysis'
 import { extractPdfText } from './lib/pdf'
+import { analyzeReferences } from './lib/references'
+import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID } from './lib/rubric'
 
 vi.mock('./lib/pdf', () => ({ extractPdfText: vi.fn() }))
 
 describe('App', () => {
   beforeEach(() => {
+    vi.restoreAllMocks()
     window.sessionStorage.clear()
     vi.clearAllMocks()
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
   })
 
   it('does not allow an empty report to be analyzed', () => {
     render(<App />)
+    expect(screen.getByRole('button', { name: 'ตรวจรายงาน' })).toBeDisabled()
+  })
+
+  it('remains usable when browser storage is blocked', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('Blocked', 'SecurityError') })
+    expect(() => render(<App />)).not.toThrow()
     expect(screen.getByRole('button', { name: 'ตรวจรายงาน' })).toBeDisabled()
   })
 
@@ -113,6 +124,52 @@ describe('App', () => {
     expect(screen.getByText(/ตรวจขนาดเอกสาร/)).toBeInTheDocument()
     expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
     expect(screen.getByText('ความสอดคล้องระหว่างบท')).toBeInTheDocument()
+    expect(screen.getByText('สิ่งที่ควรแก้ก่อนส่ง')).toBeInTheDocument()
+    expect(screen.getAllByText('ข้อมูลหรือหลักฐานที่อาจยังขาด').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'ดาวน์โหลด .txt' })).toBeInTheDocument()
+  })
+
+  it('does not display an incomplete API response', async () => {
+    vi.stubEnv('VITE_USE_MOCK_ANALYSIS', 'false')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ overallScore: 90, sections: [] }), { status: 200, headers: { 'content-type': 'application/json' } })))
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ เนื้อหารายงานสำหรับทดสอบผลตอบกลับที่มีข้อมูลไม่ครบถ้วนจากระบบภายนอก')
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    expect(await screen.findByText(/ผลตอบกลับจากระบบยังไม่ครบถ้วน/)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'ผลวิเคราะห์' })).not.toBeInTheDocument()
+  })
+
+  it('uses a new idempotency key when the user explicitly starts a fresh analysis', async () => {
+    vi.stubEnv('VITE_USE_MOCK_ANALYSIS', 'false')
+    const template = cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID)
+    const completeResult = { ...createMockAnalysis(template.sections, analyzeReferences('บทนำ'), template.version), documentInfo: { appendixExcluded: false, excludedCharCount: 0 } }
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify(completeResult), { status: 200, headers: { 'content-type': 'application/json' } })))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ เนื้อหารายงานสำหรับทดสอบการตรวจใหม่ด้วยคำขอใหม่อย่างชัดเจน')
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    await screen.findByRole('region', { name: 'ผลวิเคราะห์' })
+    const firstKey = (fetchMock.mock.calls[0][1].headers as Record<string, string>)['Idempotency-Key']
+    await user.click(screen.getByRole('button', { name: 'แก้ไขแล้วตรวจใหม่' }))
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const secondKey = (fetchMock.mock.calls[1][1].headers as Record<string, string>)['Idempotency-Key']
+    expect(secondKey).not.toBe(firstKey)
+  })
+
+  it('locks report and rubric controls while analysis is running', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ เนื้อหารายงานสำหรับตรวจสอบการล็อกแบบฟอร์มระหว่างที่ AI กำลังประมวลผล')
+    await user.click(screen.getByRole('button', { name: 'แก้ไขหัวข้อและน้ำหนัก' }))
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    expect(screen.getByLabelText('ข้อความรายงาน')).toBeDisabled()
+    expect(screen.getByLabelText('รูปแบบรายงาน')).toBeDisabled()
+    expect(screen.getByLabelText('น้ำหนัก บทนำ')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'เริ่มใหม่' })).toBeDisabled()
+    await screen.findByRole('region', { name: 'ผลวิเคราะห์' })
   })
 
   it('scrolls to and focuses the progress section when analysis starts', async () => {

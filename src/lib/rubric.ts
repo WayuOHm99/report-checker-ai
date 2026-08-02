@@ -1,17 +1,25 @@
 import { z } from 'zod'
 
 export const rubricSectionSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().trim().min(1, 'หัวข้อต้องมีชื่อ'),
-  criteria: z.string().trim().min(1, 'กรุณาระบุเกณฑ์การตรวจ'),
-  weight: z.number().finite('น้ำหนักต้องเป็นตัวเลข').nonnegative('น้ำหนักต้องไม่ติดลบ'),
+  id: z.string().trim().min(1).max(100, 'รหัสหัวข้อยาวเกินไป'),
+  title: z.string().trim().min(1, 'หัวข้อต้องมีชื่อ').max(120, 'ชื่อหัวข้อต้องไม่เกิน 120 ตัวอักษร'),
+  criteria: z.string().trim().min(1, 'กรุณาระบุเกณฑ์การตรวจ').max(2_000, 'เกณฑ์การตรวจต้องไม่เกิน 2,000 ตัวอักษร'),
+  weight: z.number().finite('น้ำหนักต้องเป็นตัวเลข').nonnegative('น้ำหนักต้องไม่ติดลบ').max(100, 'น้ำหนักต่อหัวข้อต้องไม่เกิน 100'),
   enabled: z.boolean(),
 })
 
 export const rubricSchema = z.object({
-  version: z.string().min(1),
-  sections: z.array(rubricSectionSchema).min(1, 'ต้องมีอย่างน้อย 1 หัวข้อ'),
+  version: z.string().trim().min(1).max(100),
+  sections: z.array(rubricSectionSchema).min(1, 'ต้องมีอย่างน้อย 1 หัวข้อ').max(30, 'มีหัวข้อได้ไม่เกิน 30 หัวข้อ'),
 }).superRefine(({ sections }, context) => {
+  const ids = new Set<string>()
+  sections.forEach((section, index) => {
+    if (ids.has(section.id)) {
+      context.addIssue({ code: 'custom', message: `รหัสหัวข้อซ้ำ: ${section.id}`, path: ['sections', index, 'id'] })
+    }
+    ids.add(section.id)
+  })
+
   const enabledWeight = sections
     .filter((section) => section.enabled)
     .reduce((total, section) => total + section.weight, 0)

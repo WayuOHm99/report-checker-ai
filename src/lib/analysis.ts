@@ -1,24 +1,37 @@
+import { z } from 'zod'
+
 import type { ReferenceCheckSummary } from './references'
 import type { RubricSection } from './rubric'
 
-export type AnalysisSectionResult = Pick<RubricSection, 'id' | 'title' | 'criteria' | 'weight'> & {
-  score: number
-  reason: string
-  evidence: string[]
-  missing: string[]
-  recommendation: string
-  confidence: number
-}
+export const analysisSectionResultSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  title: z.string().trim().min(1).max(120),
+  criteria: z.string().trim().min(1).max(2_000),
+  weight: z.number().finite().nonnegative().max(100),
+  score: z.number().int().min(0).max(3),
+  reason: z.string().trim().min(1).max(2_000),
+  evidence: z.array(z.string().trim().min(1).max(1_000)).max(3),
+  missing: z.array(z.string().trim().min(1).max(1_000)).max(3),
+  recommendation: z.string().trim().min(1).max(2_000),
+  confidence: z.number().min(0).max(1),
+}).strict()
 
-export type AnalysisResult = {
-  overallScore: number
-  sections: AnalysisSectionResult[]
-  qualityWarnings: string[]
-  consistencyNotes: string[]
-  referenceComment: string
-  model: string
-  rubricVersion: string
-}
+export const analysisResultSchema = z.object({
+  overallScore: z.number().int().min(0).max(100),
+  sections: z.array(analysisSectionResultSchema).min(1).max(30),
+  qualityWarnings: z.array(z.string().trim().min(1).max(1_000)).max(5),
+  consistencyNotes: z.array(z.string().trim().min(1).max(1_000)).max(5),
+  referenceComment: z.string().trim().min(1).max(2_000),
+  model: z.string().trim().min(1).max(100),
+  rubricVersion: z.string().trim().min(1).max(100),
+  documentInfo: z.object({
+    appendixExcluded: z.boolean(),
+    excludedCharCount: z.number().int().nonnegative(),
+  }).strict().optional(),
+}).strict()
+
+export type AnalysisSectionResult = z.infer<typeof analysisSectionResultSchema>
+export type AnalysisResult = z.infer<typeof analysisResultSchema>
 
 function calculateOverallScore(sections: Array<Pick<AnalysisSectionResult, 'score' | 'weight'>>) {
   const denominator = sections.reduce((sum, section) => sum + (3 * section.weight), 0)
@@ -28,7 +41,10 @@ function calculateOverallScore(sections: Array<Pick<AnalysisSectionResult, 'scor
 export function createMockAnalysis(sections: RubricSection[], referenceSummary: ReferenceCheckSummary, rubricVersion: string): AnalysisResult {
   const activeSections = sections.filter((section) => section.enabled && section.weight > 0)
   const results: AnalysisSectionResult[] = activeSections.map((section, index) => ({
-    ...section,
+    id: section.id,
+    title: section.title,
+    criteria: section.criteria,
+    weight: section.weight,
     score: [2, 2, 3][index % 3],
     reason: `Mock: ตรวจพบเนื้อหาที่สัมพันธ์กับหัวข้อ ${section.title} ในระดับเบื้องต้น`,
     evidence: ['Mock evidence: โปรดแทนที่ด้วยหลักฐานจาก Gemini เมื่อเชื่อม Worker จริง'],
@@ -46,4 +62,34 @@ export function createMockAnalysis(sections: RubricSection[], referenceSummary: 
     model: 'mock-analysis-v1',
     rubricVersion,
   }
+}
+
+export function formatAnalysisResult(result: AnalysisResult) {
+  const lines = [
+    'ผลตรวจรายงานด้วย AI (ผลเบื้องต้น)',
+    `คะแนนรวม: ${result.overallScore}%`,
+    `โมเดล: ${result.model}`,
+    `เกณฑ์: ${result.rubricVersion}`,
+    '',
+  ]
+
+  result.sections.forEach((section, index) => {
+    lines.push(
+      `${index + 1}. ${section.title} — ${section.score}/3 (น้ำหนัก ${section.weight})`,
+      `เหตุผล: ${section.reason}`,
+      `หลักฐานที่พบ: ${section.evidence.length ? section.evidence.join(' | ') : 'ยังไม่พบหลักฐานชัดเจน'}`,
+      `ข้อมูลหรือหลักฐานที่อาจยังขาด: ${section.missing.length ? section.missing.join(' | ') : 'AI ไม่พบประเด็นที่ขาดจากข้อความที่ส่ง'}`,
+      `คำแนะนำ: ${section.recommendation}`,
+      '',
+    )
+  })
+
+  lines.push('ความสอดคล้องระหว่างบท:')
+  lines.push(...(result.consistencyNotes.length ? result.consistencyNotes.map((note) => `- ${note}`) : ['- AI ไม่ได้ระบุข้อสังเกตเพิ่มเติม']))
+  lines.push('', 'เอกสารอ้างอิง:', result.referenceComment)
+  if (result.qualityWarnings.length) {
+    lines.push('', 'คำเตือนคุณภาพข้อความ:', ...result.qualityWarnings.map((warning) => `- ${warning}`))
+  }
+  lines.push('', 'หมายเหตุ: ผลนี้ใช้ช่วยทบทวนเท่านั้น ไม่ใช่คำตัดสินแทนอาจารย์หรือผลตรวจลอกเลียนผลงาน')
+  return lines.join('\n')
 }
