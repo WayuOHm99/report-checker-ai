@@ -1,19 +1,19 @@
-# RubricLens AI
+# RubricLens
 
 > ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์ ด้วย React, Cloudflare Workers และ Gemini
 
-[![Live demo](https://img.shields.io/badge/demo-reportcheckxd.pages.dev-2563eb?style=flat-square)](https://reportcheckxd.pages.dev/)
+[![Live demo](https://img.shields.io/badge/demo-rubriclens.pages.dev-2563eb?style=flat-square)](https://rubriclens.pages.dev/)
 [![Tests](https://img.shields.io/badge/local%20tests-106%20unit%20%7C%2072%20E2E-16a34a?style=flat-square)](docs/testing-report.md)
 
-![RubricLens AI preview](public/og.png)
+![RubricLens preview](public/og.png)
 
 ## Project overview
 
-RubricLens AI เป็น single-page web app สำหรับตรวจเอกสารตามเกณฑ์เฉพาะประเภท ผู้ใช้เลือกระหว่างรายงานทั่วไป โครงงาน และรายงานวิจัย แล้ววางข้อความหรืออัปโหลด PDF เพื่อรับผลตรวจพร้อมเหตุผล หลักฐานที่พบ สิ่งที่อาจยังขาด และคำแนะนำใน workflow เดียว
+RubricLens เป็น single-page web app สำหรับตรวจเอกสารตามเกณฑ์เฉพาะประเภท ผู้ใช้เลือกระหว่างรายงานทั่วไป โครงงาน และรายงานวิจัย แล้ววางข้อความหรืออัปโหลด PDF เพื่อรับผลตรวจพร้อมเหตุผล หลักฐานที่พบ สิ่งที่อาจยังขาด และคำแนะนำใน workflow เดียว
 
 โปรเจกต์นี้ออกแบบให้เป็น **ผู้ช่วยทบทวน ไม่ใช่ผู้ตัดสิน** ผลจาก AI จึงแสดงหลักฐาน สิ่งที่อาจขาด และคำแนะนำเพื่อให้ผู้ใช้ตรวจเทียบกับรายงานต้นฉบับอีกครั้ง
 
-**Live demo:** [reportcheckxd.pages.dev](https://reportcheckxd.pages.dev/)
+**Live demo:** [rubriclens.pages.dev](https://rubriclens.pages.dev/)
 
 ## Why this project is interesting
 

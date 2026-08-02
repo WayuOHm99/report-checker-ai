@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "report-checker-ai-api",
+  "name": "rubriclens-api",
   "main": "worker/src/index.ts",
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
@@ -18,7 +18,7 @@
     "MOCK_ANALYSIS": "false",
     "DAILY_BUDGET_LIMIT": "100",
     "DAILY_TOKEN_BUDGET": "2000000",
-    "ALLOWED_ORIGIN": "https://reportcheckxd.pages.dev"
+    "ALLOWED_ORIGIN": "https://rubriclens.pages.dev"
   },
   "kv_namespaces": [
     {

@@ -115,18 +115,18 @@ describe('App', () => {
   })
 
   it('restores a draft only from the current browser session', () => {
-    window.sessionStorage.setItem('report-checker-session-draft-v1', JSON.stringify({
+    window.sessionStorage.setItem('rubriclens-session-draft-v1', JSON.stringify({
       reportText: 'ร่างรายงานในแท็บนี้', templateId: 'project-th-v1',
       rubric: [{ id: 'intro', title: 'บทนำ', criteria: 'มีบริบท', weight: 1, enabled: true }],
     }))
     render(<App />)
     expect(screen.getByLabelText('ข้อความเอกสาร')).toHaveValue('ร่างรายงานในแท็บนี้')
     expect(screen.getByLabelText('ประเภทงาน')).toHaveValue('project')
-    expect(window.localStorage.getItem('report-checker-session-draft-v1')).toBeNull()
+    expect(window.localStorage.getItem('rubriclens-session-draft-v1')).toBeNull()
   })
 
   it('repairs a draft whose document type contradicts its known template', () => {
-    window.sessionStorage.setItem('report-checker-session-draft-v1', JSON.stringify({
+    window.sessionStorage.setItem('rubriclens-session-draft-v1', JSON.stringify({
       reportText: 'ร่างที่บันทึกจากสถานะไม่สอดคล้อง',
       documentType: 'research-report',
       templateId: 'project-th-v1',
@@ -141,7 +141,7 @@ describe('App', () => {
   })
 
   it('replaces an unknown saved template and its stale rubric with the document-type default', async () => {
-    window.sessionStorage.setItem('report-checker-session-draft-v1', JSON.stringify({
+    window.sessionStorage.setItem('rubriclens-session-draft-v1', JSON.stringify({
       reportText: 'ร่างจากเกณฑ์รุ่นที่เลิกใช้แล้ว',
       documentType: 'research-report',
       templateId: 'retired-research-template',

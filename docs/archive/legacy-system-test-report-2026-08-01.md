@@ -1,9 +1,9 @@
 # รายงานตรวจสอบระบบช่วยตรวจโครงงานและรายงานด้วย AI
 
 วันที่ตรวจ: 1 สิงหาคม 2026  
-โปรเจกต์: `report-checker-ai`  
+โปรเจกต์: `rubriclens-ai`
 Commit ที่ตรวจ: `461212b` (`feat: migrate to Gemini 3.6 Flash`)  
-Git remote: `https://github.com/WayuOHm99/report-checker-ai.git`
+Git remote: `https://github.com/WayuOHm99/rubriclens-ai.git`
 
 ## 1. วัตถุประสงค์
 

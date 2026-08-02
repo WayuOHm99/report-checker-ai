@@ -41,7 +41,7 @@ npm run verify
 
 **สถานะ: deploy และตรวจ production ผ่านแล้วเมื่อ 2 สิงหาคม 2026**
 
-- Live URL: [https://reportcheckxd.pages.dev/](https://reportcheckxd.pages.dev/)
+- Live URL: [https://rubriclens.pages.dev/](https://rubriclens.pages.dev/)
 - Pages deployment: `3be093f5-c6b5-4075-ac2c-851ee85aa307`
 - Pages source commit: `e1c0112`
 - Worker version: `789fe495-e544-48b3-b228-a7bb623c52eb`

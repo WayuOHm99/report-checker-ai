@@ -1,6 +1,6 @@
 # Deployment runbook
 
-Runbook สำหรับ deploy RubricLens AI ขึ้น production (Cloudflare Worker + Cloudflare Pages)
+Runbook สำหรับ deploy RubricLens ขึ้น production (Cloudflare Worker + Cloudflare Pages)
 
 > **ต้องได้รับคำยืนยันจากเจ้าของโปรเจกต์ก่อนรันขั้นตอนที่ deploy จริงทุกครั้ง** ขั้นตอนที่ 0–1 รันได้อย่างปลอดภัยโดยไม่เปลี่ยนอะไรใน production
 
@@ -67,7 +67,7 @@ npx wrangler deploy
 ### 3. Health and contract smoke
 
 ```bash
-curl -s https://report-checker-ai-api.oomzazato01.workers.dev/api/health
+curl -s https://rubriclens-api.oomzazato01.workers.dev/api/health
 ```
 
 ต้องได้:
@@ -82,7 +82,7 @@ curl -s https://report-checker-ai-api.oomzazato01.workers.dev/api/health
 ตรวจ CORS และ method guard เพิ่ม:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://report-checker-ai-api.oomzazato01.workers.dev/api/analyze   # ต้องได้ 405
+curl -s -o /dev/null -w '%{http_code}\n' https://rubriclens-api.oomzazato01.workers.dev/api/analyze   # ต้องได้ 405
 ```
 
 ก่อน deploy Pages ให้เปิด Pages รุ่นเดิมและวิเคราะห์ข้อความสังเคราะห์หนึ่งครั้ง เพื่อตรวจว่า compatibility Worker คืน v0 shape ที่ UI เดิมอ่านได้ ห้ามใช้เอกสารจริงหรือข้อมูลส่วนบุคคลในการ smoke test
@@ -91,16 +91,16 @@ curl -s -o /dev/null -w '%{http_code}\n' https://report-checker-ai-api.oomzazato
 
 ```bash
 npm run build
-npx wrangler pages deploy dist --project-name reportcheckxd --branch main
+npx wrangler pages deploy dist --project-name rubriclens --branch main
 ```
 
 บันทึก deployment id ที่ได้ และ deployment id ของรุ่นก่อนหน้า
 
 ### 5. Browser smoke
 
-เปิด https://reportcheckxd.pages.dev/ แล้วตรวจด้วยมือ:
+เปิด https://rubriclens.pages.dev/ แล้วตรวจด้วยมือ:
 
-1. หน้าโหลดได้ และหัวข้อ “RubricLens AI” แสดงผล
+1. หน้าโหลดได้ และหัวข้อ “RubricLens” แสดงผล
 2. เปลี่ยนประเภทงานเป็นโครงงานและรายงานวิจัย แล้วเกณฑ์เปลี่ยนตาม
 3. วางข้อความสังเคราะห์แล้วกดตรวจ จนได้ผลจริงจาก Worker
 4. ผลแสดงคะแนนรวม หลักฐาน และ “สิ่งที่ควรแก้ก่อนส่ง”
@@ -115,7 +115,7 @@ npx wrangler pages deploy dist --project-name reportcheckxd --branch main
 ```bash
 testsprite --version
 testsprite auth whoami
-testsprite test run --all --project <project-id> --target-url https://reportcheckxd.pages.dev --wait --timeout 600 --output json
+testsprite test run --all --project <project-id> --target-url https://rubriclens.pages.dev --wait --timeout 600 --output json
 ```
 
 เมื่อมี failure ให้ดาวน์โหลด artifact มาตรวจก่อนแก้:
@@ -147,17 +147,17 @@ npx wrangler rollback --message "rollback: <เหตุผลสั้น ๆ>"
 ### Pages rollback
 
 ```bash
-npx wrangler pages deployment list --project-name reportcheckxd
+npx wrangler pages deployment list --project-name rubriclens
 ```
 
-จากนั้นใน Cloudflare Dashboard → Workers & Pages → reportcheckxd → Deployments เลือก deployment ที่ต้องการแล้วกด **Rollback**
+จากนั้นใน Cloudflare Dashboard → Workers & Pages → rubriclens → Deployments เลือก deployment ที่ต้องการแล้วกด **Rollback**
 
 Pages เก็บ deployment เก่าไว้ จึง rollback ได้ทันทีโดยไม่ต้อง build ใหม่ หากต้องการ rollback ผ่าน CLI ให้ deploy artifact ของ commit เดิมซ้ำ:
 
 ```bash
 git checkout <commit-เดิม>
 npm ci && npm run build
-npx wrangler pages deploy dist --project-name reportcheckxd --branch main
+npx wrangler pages deploy dist --project-name rubriclens --branch main
 ```
 
 ### ลำดับการ rollback

@@ -156,14 +156,14 @@ describe('POST /api/analyze', () => {
   })
 
   it('allows browser CORS only for the configured Pages origins', async () => {
-    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://reportcheckxd.pages.dev' } satisfies AnalysisEnv
-    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportcheckxd.pages.dev' } }), env)
-    const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.reportcheckxd.pages.dev' } }), env)
+    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://rubriclens.pages.dev' } satisfies AnalysisEnv
+    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://rubriclens.pages.dev' } }), env)
+    const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.rubriclens.pages.dev' } }), env)
     const oldPagesDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportzcheckxai.pages.dev' } }), env)
     const rejected = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example' } }), env)
-    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://reportcheckxd.pages.dev')
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://rubriclens.pages.dev')
     expect(allowed.headers.get('access-control-allow-headers')).toContain(API_VERSION_HEADER.toLowerCase())
-    expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.reportcheckxd.pages.dev')
+    expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.rubriclens.pages.dev')
     expect(oldPagesDomain.headers.get('access-control-allow-origin')).toBeNull()
     expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
   })

@@ -1,6 +1,6 @@
 # Architecture notes
 
-เอกสารนี้สรุปการตัดสินใจทางเทคนิคที่สำคัญของ RubricLens AI สำหรับใช้ประกอบ portfolio หรือ technical interview
+เอกสารนี้สรุปการตัดสินใจทางเทคนิคที่สำคัญของ RubricLens สำหรับใช้ประกอบ portfolio หรือ technical interview
 
 ## Components
 

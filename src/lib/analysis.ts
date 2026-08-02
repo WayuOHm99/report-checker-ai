@@ -227,7 +227,7 @@ export function createMockAnalysis(sections: RubricSection[], referenceSummary: 
 export function formatAnalysisResult(result: AnalysisResult) {
   const documentType = getDocumentTypeDefinition(result.documentType)
   const lines = [
-    `${documentType.resultTitle} จาก RubricLens AI (ผลเบื้องต้น)`,
+    `${documentType.resultTitle} จาก RubricLens (ผลเบื้องต้น)`,
     `ประเภทงาน: ${documentType.label}`,
     `คะแนนรวม: ${formatOverallScore(result)}`,
     `หัวข้อที่ใช้ประเมิน: ${result.scoreSummary.applicableSectionCount} · หัวข้อที่ไม่เกี่ยวข้อง: ${result.scoreSummary.notApplicableSectionCount}`,

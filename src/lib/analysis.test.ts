@@ -20,7 +20,7 @@ describe('analysis result handling', () => {
     const result = createMockAnalysis(rubric.sections, analyzeReferences('บทนำ'), rubric.version, rubric.documentType)
     const text = formatAnalysisResult(result)
     expect(text).toContain('คะแนนรวม:')
-    expect(text).toContain('ผลตรวจรายงานทั่วไป จาก RubricLens AI')
+    expect(text).toContain('ผลตรวจรายงานทั่วไป จาก RubricLens')
     expect(text).toContain('ประเภทงาน: รายงานทั่วไป')
     expect(text).toContain('ความสอดคล้องของเอกสาร (วัตถุประสงค์ · เนื้อหา · การวิเคราะห์ · สรุปผล):')
     expect(text).toContain('ข้อมูลหรือหลักฐานที่อาจยังขาด:')
@@ -30,7 +30,7 @@ describe('analysis result handling', () => {
   it('names the project document type and its own consistency dimensions in the export', () => {
     const rubric = cloneRubricTemplate('project-th-v1')
     const text = formatAnalysisResult(createMockAnalysis(rubric.sections, analyzeReferences('บทนำ'), rubric.version, rubric.documentType))
-    expect(text).toContain('ผลตรวจโครงงาน จาก RubricLens AI')
+    expect(text).toContain('ผลตรวจโครงงาน จาก RubricLens')
     expect(text).toContain('ประเภทงาน: โครงงาน')
     expect(text).toContain('ความสอดคล้องของเอกสาร (ปัญหา · วัตถุประสงค์ · วิธีทำ · ผลงาน · การทดสอบ · สรุปผล):')
   })
