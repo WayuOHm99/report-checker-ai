@@ -209,7 +209,8 @@ describe('POST /api/analyze', () => {
     expect(response.status).toBe(200)
     expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
     expect(sdkMocks.generateContent.mock.calls[0][0].config).not.toHaveProperty('temperature')
-    expect(sdkMocks.generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(750)
+    expect(sdkMocks.generateContent.mock.calls[0][0].config.maxOutputTokens).toBe(1500)
+    expect(sdkMocks.generateContent.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'low' })
     expect(sdkMocks.generateContent.mock.calls[0][0].contents).toContain('"id":"project"')
   })
 
@@ -490,9 +491,9 @@ describe('multi-chunk consolidation', () => {
 
   it('charges the consolidation pass against the daily token budget', async () => {
     sdkMocks.generateContent.mockResolvedValue({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'พบเนื้อหา' }]) })
-    // Each call costs 500 prompt tokens plus 750 reserved output tokens for one
-    // rubric section: two chunks fit inside 3,000, the consolidation pass does not.
-    const response = await worker.fetch(analyzeRequest(chunkedBody, 'consolidation-budget-key-1'), geminiEnv({ DAILY_TOKEN_BUDGET: '3000' }))
+    // Each call costs 500 prompt tokens plus 1,500 reserved output tokens for
+    // one rubric section: two chunks fit inside 5,000, consolidation does not.
+    const response = await worker.fetch(analyzeRequest(chunkedBody, 'consolidation-budget-key-1'), geminiEnv({ DAILY_TOKEN_BUDGET: '5000' }))
 
     expect(response.status).toBe(429)
     expect((await response.json() as { code: string }).code).toBe('DAILY_TOKEN_BUDGET')
@@ -509,9 +510,9 @@ describe('token budget accounting', () => {
 
   it('charges a JSON validation retry as a second call', async () => {
     sdkMocks.generateContent.mockResolvedValue({ text: '{"sections":[]}' })
-    // One call costs 200 prompt tokens plus 750 reserved output tokens; the
-    // retry pushes the total past a 1,000 token budget.
-    const response = await worker.fetch(analyzeRequest(body, 'budget-retry-key-000001'), geminiEnv({ DAILY_TOKEN_BUDGET: '1000' }))
+    // One call costs 200 prompt tokens plus 1,500 reserved output tokens; the
+    // retry pushes the total past a 2,000 token budget.
+    const response = await worker.fetch(analyzeRequest(body, 'budget-retry-key-000001'), geminiEnv({ DAILY_TOKEN_BUDGET: '2000' }))
 
     expect(response.status).toBe(429)
     expect((await response.json() as { code: string }).code).toBe('DAILY_TOKEN_BUDGET')
@@ -522,7 +523,7 @@ describe('token budget accounting', () => {
 
   it('allows an analysis that fits inside the budget', async () => {
     sdkMocks.generateContent.mockResolvedValue({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'พบเนื้อหา' }]) })
-    const response = await worker.fetch(analyzeRequest(body, 'budget-ok-key-0000000001'), geminiEnv({ DAILY_TOKEN_BUDGET: '1000' }))
+    const response = await worker.fetch(analyzeRequest(body, 'budget-ok-key-0000000001'), geminiEnv({ DAILY_TOKEN_BUDGET: '2000' }))
 
     expect(response.status).toBe(200)
     expect(sdkMocks.generateContent).toHaveBeenCalledTimes(1)

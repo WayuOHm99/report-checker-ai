@@ -267,7 +267,9 @@ function createTokenLedger(env: AnalysisEnv): TokenLedger {
 
 /** Structured JSON output stays small and scales with the rubric, not the document. */
 function estimateOutputTokens(sectionCount: number) {
-  return 500 + (sectionCount * 250)
+  // Gemini 3 reasoning tokens share the generation allowance with structured
+  // output. Leave enough room for low-level thinking plus Thai JSON fields.
+  return 1_000 + (sectionCount * 500)
 }
 
 function sanitizeRubric(sections: z.infer<typeof rubricSectionSchema>[]) {
@@ -363,7 +365,16 @@ async function generateValidated(ai: GoogleGenAI, model: string, call: ModelCall
     const response = await ai.models.generateContent({
       model,
       contents: modelCall.prompt,
-      config: { systemInstruction: modelCall.systemInstruction, responseMimeType: 'application/json', responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA, maxOutputTokens },
+      config: {
+        systemInstruction: modelCall.systemInstruction,
+        responseMimeType: 'application/json',
+        responseJsonSchema: ANALYSIS_RESPONSE_JSON_SCHEMA,
+        maxOutputTokens,
+        // Gemini 3 defaults to deeper thinking, which can consume the output
+        // allowance and exceed the browser's two-minute request window. Rubric
+        // evaluation is constrained instruction-following, so low is enough.
+        thinkingConfig: { thinkingLevel: 'low' },
+      },
     })
     return response.text ?? ''
   }

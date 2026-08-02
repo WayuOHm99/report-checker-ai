@@ -98,6 +98,8 @@ User input
 
 ก่อน application-level model call แต่ละครั้ง ระบบกันงบแบบ conservative โดยใช้ `countTokens` กับ prompt จริงและบังคับ `maxOutputTokens` ตามจำนวนหัวข้อใน rubric การกันงบจึงครอบคลุม chunk pass, consolidation pass, JSON validation retry และการรันซ้ำบน fallback model แยกกัน แต่ไม่ใช่ยอด billing จริงและมองไม่เห็น retry ภายใน SDK
 
+Gemini 3 ใช้ `thinkingLevel: low` สำหรับงาน rubric ที่เป็น constrained instruction-following เพื่อลด latency และเหลือ generation allowance ให้ JSON ครบภายใน timeout ของ browser
+
 ### API versioning
 
 `apiVersion` เป็นค่าคงที่ที่ Worker ประทับบน `/api/health` และผล v1 ของ `/api/analyze` ส่วน request v1 ระบุ `X-RubricLens-Api-Version: 1`
