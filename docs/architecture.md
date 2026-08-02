@@ -1,6 +1,6 @@
 # Architecture notes
 
-เอกสารนี้สรุปการตัดสินใจทางเทคนิคที่สำคัญของ RubricLens สำหรับใช้ประกอบ portfolio หรือ technical interview
+เอกสารนี้สรุปการตัดสินใจทางเทคนิคที่สำคัญของ RubricLensAi สำหรับใช้ประกอบ portfolio หรือ technical interview
 
 ## Components
 
@@ -102,7 +102,7 @@ Gemini 3 ใช้ `thinkingLevel: low` สำหรับงาน rubric ท�
 
 ### API versioning
 
-`apiVersion` เป็นค่าคงที่ที่ Worker ประทับบน `/api/health` และผล v1 ของ `/api/analyze` ส่วน request v1 ระบุ `X-RubricLens-Api-Version: 1`
+`apiVersion` เป็นค่าคงที่ที่ Worker ประทับบน `/api/health` และผล v1 ของ `/api/analyze` ส่วน request v1 ระบุ `X-RubricLensAi-Api-Version: 1` โดยยังรับ header ชื่อเดิมชั่วคราวระหว่างย้ายแบรนด์
 
 - Browser ปฏิเสธเวอร์ชันที่ไม่รู้จักและบอกผู้ใช้ให้รีเฟรช แทนที่จะ parse บางส่วนแล้วรายงานคะแนนผิด
 - response รุ่นก่อนที่ยังไม่มี `apiVersion` ถูก parse ด้วย schema แยกต่างหากสำหรับช่วง rolling deployment แล้ว upgrade อย่างชัดเจน (ทุกหัวข้อเป็น `applicable`) พร้อมเพิ่ม quality warning ให้ผู้ใช้เห็นว่าผลมาจากเซิร์ฟเวอร์รุ่นก่อน ไม่ใช่ซ่อนความต่างไว้

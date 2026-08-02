@@ -1,19 +1,19 @@
-# RubricLens
+# RubricLensAi
 
 > ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์ ด้วย React, Cloudflare Workers และ Gemini
 
-[![Live demo](https://img.shields.io/badge/demo-rubriclens.pages.dev-2563eb?style=flat-square)](https://rubriclens.pages.dev/)
+[![Live demo](https://img.shields.io/badge/demo-rubriclensai.pages.dev-2563eb?style=flat-square)](https://rubriclensai.pages.dev/)
 [![Tests](https://img.shields.io/badge/local%20tests-106%20unit%20%7C%2072%20E2E-16a34a?style=flat-square)](docs/testing-report.md)
 
-![RubricLens preview](public/og.png)
+![RubricLensAi preview](public/og.png)
 
 ## Project overview
 
-RubricLens เป็น single-page web app สำหรับตรวจเอกสารตามเกณฑ์เฉพาะประเภท ผู้ใช้เลือกระหว่างรายงานทั่วไป โครงงาน และรายงานวิจัย แล้ววางข้อความหรืออัปโหลด PDF เพื่อรับผลตรวจพร้อมเหตุผล หลักฐานที่พบ สิ่งที่อาจยังขาด และคำแนะนำใน workflow เดียว
+RubricLensAi เป็น single-page web app สำหรับตรวจเอกสารตามเกณฑ์เฉพาะประเภท ผู้ใช้เลือกระหว่างรายงานทั่วไป โครงงาน และรายงานวิจัย แล้ววางข้อความหรืออัปโหลด PDF เพื่อรับผลตรวจพร้อมเหตุผล หลักฐานที่พบ สิ่งที่อาจยังขาด และคำแนะนำใน workflow เดียว
 
 โปรเจกต์นี้ออกแบบให้เป็น **ผู้ช่วยทบทวน ไม่ใช่ผู้ตัดสิน** ผลจาก AI จึงแสดงหลักฐาน สิ่งที่อาจขาด และคำแนะนำเพื่อให้ผู้ใช้ตรวจเทียบกับรายงานต้นฉบับอีกครั้ง
 
-**Live demo:** [rubriclens.pages.dev](https://rubriclens.pages.dev/)
+**Live demo:** [rubriclensai.pages.dev](https://rubriclensai.pages.dev/)
 
 ## Why this project is interesting
 
@@ -145,7 +145,7 @@ npm run worker:dev
 
 ## Deployment
 
-ลำดับการ deploy สำคัญ: **compatibility Worker ก่อน แล้วจึง Pages** Worker รองรับ v0 shape สำหรับ Pages เดิมและ v1 ผ่าน `X-RubricLens-Api-Version` สำหรับ Pages ใหม่ จึงไม่มีช่วง contract error
+ลำดับการ deploy สำคัญ: **compatibility Worker ก่อน แล้วจึง Pages** Worker รองรับ v0 shape สำหรับ Pages เดิมและ v1 ผ่าน `X-RubricLensAi-Api-Version` สำหรับ Pages ใหม่ จึงไม่มีช่วง contract error
 
 ```text
 Worker dry-run -> Worker deploy -> health/contract smoke -> Pages deploy -> browser smoke -> TestSprite

@@ -52,7 +52,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 test('a user sends text for analysis with one primary click', async ({ page }) => {
-  await expect(page.getByRole('heading', { name: 'RubricLens', level: 1 })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'RubricLensAi', level: 1 })).toBeVisible()
   await expect(page.getByText(/ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์/)).toBeVisible()
   await page.getByLabel('ข้อความเอกสาร').fill('บทนำ\nรายงานทดสอบสำหรับ browser smoke test ซึ่งมีรายละเอียดเพียงพอสำหรับตรวจเส้นทางการใช้งานตั้งแต่ต้นจนจบ')
   await page.getByRole('button', { name: 'ตรวจรายงาน' }).click()

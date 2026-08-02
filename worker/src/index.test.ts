@@ -14,7 +14,7 @@ vi.mock('@google/genai', () => ({
 }))
 
 import worker, { type AnalysisEnv } from './index'
-import { API_VERSION, API_VERSION_HEADER, LEGACY_API_VERSION } from '../../shared/api-contract'
+import { API_VERSION, API_VERSION_HEADER, LEGACY_API_VERSION, LEGACY_API_VERSION_HEADER } from '../../shared/api-contract'
 
 const body = {
   reportText: 'บทนำ เนื้อหาทดสอบ', anonymousToken: 'anonymous-token-for-local-testing',
@@ -156,14 +156,15 @@ describe('POST /api/analyze', () => {
   })
 
   it('allows browser CORS only for the configured Pages origins', async () => {
-    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://rubriclens.pages.dev' } satisfies AnalysisEnv
-    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://rubriclens.pages.dev' } }), env)
-    const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.rubriclens.pages.dev' } }), env)
+    const env = { MOCK_ANALYSIS: 'true', ALLOWED_ORIGIN: 'https://rubriclensai.pages.dev' } satisfies AnalysisEnv
+    const allowed = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://rubriclensai.pages.dev' } }), env)
+    const preview = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://abc123.rubriclensai.pages.dev' } }), env)
     const oldPagesDomain = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://reportzcheckxai.pages.dev' } }), env)
     const rejected = await worker.fetch(new Request('https://local.test/api/analyze', { method: 'OPTIONS', headers: { Origin: 'https://untrusted.example' } }), env)
-    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://rubriclens.pages.dev')
+    expect(allowed.headers.get('access-control-allow-origin')).toBe('https://rubriclensai.pages.dev')
     expect(allowed.headers.get('access-control-allow-headers')).toContain(API_VERSION_HEADER.toLowerCase())
-    expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.rubriclens.pages.dev')
+    expect(allowed.headers.get('access-control-allow-headers')).toContain(LEGACY_API_VERSION_HEADER.toLowerCase())
+    expect(preview.headers.get('access-control-allow-origin')).toBe('https://abc123.rubriclensai.pages.dev')
     expect(oldPagesDomain.headers.get('access-control-allow-origin')).toBeNull()
     expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
   })

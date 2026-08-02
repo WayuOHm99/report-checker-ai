@@ -41,10 +41,10 @@ npm run verify
 
 **สถานะ: deploy และตรวจ production ผ่านแล้วเมื่อ 2 สิงหาคม 2026**
 
-- Live URL: [https://rubriclens.pages.dev/](https://rubriclens.pages.dev/)
-- Pages deployment: `3be093f5-c6b5-4075-ac2c-851ee85aa307`
-- Pages source commit: `e1c0112`
-- Worker version: `789fe495-e544-48b3-b228-a7bb623c52eb`
+- Live URL: [https://rubriclensai.pages.dev/](https://rubriclensai.pages.dev/)
+- Pages verified deployment: `14368c90-9372-4d64-bcd5-95f3715b40ed`
+- Pages source: current `main` rebrand build
+- Worker version: `e2d10195-982c-45d0-89e6-bf2fa68076d9`
 - Worker health: API v0/v1 supported, AI and rate-limit configuration present
 - Browser smoke: หน้าใหม่โหลดได้ และ v1 analysis จริงแสดงผลครบ 8/8 หัวข้อในประมาณ 11.17 วินาที
 - Legacy API smoke: v0 response ใช้ exact legacy shape และไม่รั่ว field ของ v1
@@ -52,6 +52,13 @@ npm run verify
 ระหว่าง production smoke พบว่า Gemini 3 ใช้ thinking และ output allowance มากกว่าค่าที่ตั้งเดิมจน response ถูกตัดและ schema validation ล้มเหลว จึงกำหนด `thinkingLevel: low` สำหรับงาน structured scoring และขยาย output cap ตามจำนวนหัวข้อ จากนั้น deploy Worker ใหม่และยืนยัน request เดิมผ่านจริง
 
 ## TestSprite production suite
+
+การย้ายแบรนด์เป็น RubricLensAi ตรวจซ้ำบน `https://rubriclensai.pages.dev/` แล้ว:
+
+- หน้าแรกและชื่อแบรนด์: run `7894d242-b164-46c7-9d43-33c7378b1a1f` ผ่าน
+- ส่งรายงานและแสดงผล AI จริง: run `18404aaf-8f8e-4130-af26-d95d42b0ecae` ผ่าน 7/7 ขั้นตอน
+- mobile viewport 390×844: run `cd178ead-3a16-4de5-bddb-81eee89e06dd` ผ่าน 9/9 ขั้นตอน
+- fresh mobile agent run `10c4b318-7740-4ad7-b653-f71faad3c02a` ถูก block เพราะ runner ไม่มีคำสั่งเปลี่ยน viewport ไม่ใช่ application failure; ดาวน์โหลด artifact และยืนยันด้วย saved-code mobile run ข้างต้นแล้ว
 
 TestSprite CLI `0.4.0` รันกับ production URL โดยตรง ผลสุดท้ายใน project `c76aad7a-c7f9-44a8-a888-a842a4cd386e` คือ **10/10 scenarios passed**
 

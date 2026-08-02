@@ -4,7 +4,7 @@ from playwright import async_api
 from playwright.async_api import expect
 
 
-TARGET_URL = "https://rubriclens.pages.dev/"
+TARGET_URL = "https://rubriclensai.pages.dev/"
 MOBILE_WIDTH = 390
 MOBILE_HEIGHT = 844
 
@@ -36,9 +36,9 @@ async def run_test():
 
         await page.goto(TARGET_URL, wait_until="domcontentloaded")
 
-        heading = page.get_by_role("heading", name="RubricLens", level=1)
+        heading = page.get_by_role("heading", name="RubricLensAi", level=1)
         await expect(heading).to_be_visible()
-        assert await heading.text_content() == "RubricLens"
+        assert await heading.text_content() == "RubricLensAi"
 
         layout = await page.evaluate(
             """

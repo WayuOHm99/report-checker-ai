@@ -7,6 +7,7 @@ import {
 } from './prompt'
 import {
   API_VERSION, API_VERSION_HEADER, DEFAULT_APPLICABILITY, isSupportedRequestApiVersion, LEGACY_API_VERSION,
+  LEGACY_API_VERSION_HEADER,
   SECTION_APPLICABILITY, SUPPORTED_REQUEST_API_VERSIONS, type RequestApiVersion,
 } from '../../shared/api-contract'
 import { DOCUMENT_TYPES, getDocumentTypeDefinition, LEGACY_DOCUMENT_TYPE, type DocumentType } from '../../shared/document-types'
@@ -151,7 +152,7 @@ function withCors(response: Response, request: Request, env: AnalysisEnv) {
   const headers = new Headers(response.headers)
   headers.set('access-control-allow-origin', origin)
   headers.set('access-control-allow-methods', 'POST, OPTIONS')
-  headers.set('access-control-allow-headers', `content-type, idempotency-key, ${API_VERSION_HEADER.toLowerCase()}`)
+  headers.set('access-control-allow-headers', `content-type, idempotency-key, ${API_VERSION_HEADER.toLowerCase()}, ${LEGACY_API_VERSION_HEADER.toLowerCase()}`)
   headers.set('access-control-max-age', '86400')
   headers.set('vary', 'Origin')
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
@@ -214,7 +215,7 @@ function canonicalRequestDigest(request: AnalysisRequest) {
 }
 
 function requestedApiVersion(request: Request): RequestApiVersion {
-  const header = request.headers.get(API_VERSION_HEADER)
+  const header = request.headers.get(API_VERSION_HEADER) ?? request.headers.get(LEGACY_API_VERSION_HEADER)
   if (header === null) return LEGACY_API_VERSION
   const version = Number(header)
   if (!Number.isInteger(version) || !isSupportedRequestApiVersion(version)) {

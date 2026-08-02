@@ -10,7 +10,10 @@
 export const API_VERSION = 1
 
 /** Explicit opt-in used by the new Pages bundle during a rolling deployment. */
-export const API_VERSION_HEADER = 'X-RubricLens-Api-Version'
+export const API_VERSION_HEADER = 'X-RubricLensAi-Api-Version'
+
+/** Accepted temporarily so an already-open tab from the previous public name can finish its request. */
+export const LEGACY_API_VERSION_HEADER = 'X-RubricLens-Api-Version'
 
 /** Versions this build of the browser bundle can render without losing information. */
 export const SUPPORTED_API_VERSIONS: readonly number[] = [API_VERSION]

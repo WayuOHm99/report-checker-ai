@@ -19,8 +19,9 @@ import { analyzeReferences } from './lib/references'
 import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, getDefaultRubricTemplate, getRubricTemplatesForDocumentType, inferDocumentTypeFromTemplate, rubricSchema, rubricSectionSchema, rubricTemplates, type RubricSection } from './lib/rubric'
 import { DOCUMENT_TYPES, documentTypeDefinitions, getDocumentTypeDefinition, type DocumentType } from '../shared/document-types'
 
-const DRAFT_KEY = 'rubriclens-session-draft-v1'
-const PRODUCTION_API_BASE_URL = 'https://rubriclens-api.oomzazato01.workers.dev/api'
+const DRAFT_KEY = 'rubriclensai-session-draft-v1'
+const LEGACY_DRAFT_KEY = 'rubriclens-session-draft-v1'
+const PRODUCTION_API_BASE_URL = 'https://rubriclensai-api.oomzazato01.workers.dev/api'
 
 function usesMockAnalysis() {
   const configured = import.meta.env.VITE_USE_MOCK_ANALYSIS
@@ -69,10 +70,11 @@ const stateLabels: Record<AnalysisState, string> = {
 const analysisSteps = ['ตรวจขนาดเอกสาร', 'เตรียมเกณฑ์การตรวจ', 'ส่งข้อมูลผ่านระบบที่ปลอดภัย', 'AI อ่านเอกสาร', 'ตรวจความครบถ้วนของคำตอบ', 'รวมผลแต่ละหัวข้อ', 'คำนวณคะแนนรวม']
 
 function getAnonymousToken() {
-  const key = 'rubriclens-anonymous-token'
+  const key = 'rubriclensai-anonymous-token'
+  const legacyKey = 'rubriclens-anonymous-token'
   const token = crypto.randomUUID()
   try {
-    const existing = window.localStorage.getItem(key)
+    const existing = window.localStorage.getItem(key) ?? window.localStorage.getItem(legacyKey)
     if (existing) return existing
     window.localStorage.setItem(key, token)
   } catch {
@@ -82,7 +84,10 @@ function getAnonymousToken() {
 }
 
 function removeStoredDraft() {
-  try { window.sessionStorage.removeItem(DRAFT_KEY) } catch { /* Storage may be unavailable. */ }
+  try {
+    window.sessionStorage.removeItem(DRAFT_KEY)
+    window.sessionStorage.removeItem(LEGACY_DRAFT_KEY)
+  } catch { /* Storage may be unavailable. */ }
 }
 
 function saveDraft(draft: Draft) {
@@ -92,7 +97,7 @@ function saveDraft(draft: Draft) {
 function loadDraft(): Draft {
   const fallback = cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID)
   try {
-    const saved = window.sessionStorage.getItem(DRAFT_KEY)
+    const saved = window.sessionStorage.getItem(DRAFT_KEY) ?? window.sessionStorage.getItem(LEGACY_DRAFT_KEY)
     const parsed = draftSchema.safeParse(saved ? JSON.parse(saved) : null)
     if (parsed.success) {
       const savedTemplate = rubricTemplates.find((template) => template.id === parsed.data.templateId)
@@ -543,7 +548,7 @@ function App() {
       <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
         <header className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">RubricLens</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">RubricLensAi</h1>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-7"><span className="font-medium text-slate-800">ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์</span> — รองรับรายงานทั่วไป โครงงาน และรายงานวิจัย</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

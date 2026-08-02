@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://rubriclens.pages.dev/sitemap.xml
+Sitemap: https://rubriclensai.pages.dev/sitemap.xml
