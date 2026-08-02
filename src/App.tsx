@@ -113,6 +113,7 @@ function App() {
   const [showAdvancedRubric, setShowAdvancedRubric] = useState(false)
   const [showReferenceDetails, setShowReferenceDetails] = useState(false)
   const [appendixConfirmed, setAppendixConfirmed] = useState(false)
+  const [appendixConfirmationOpen, setAppendixConfirmationOpen] = useState(false)
   const timeoutRef = useRef<number | null>(null)
   const progressTimerRef = useRef<number | null>(null)
   const analysisAbortRef = useRef<AbortController | null>(null)
@@ -123,6 +124,8 @@ function App() {
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
   const analyzingRef = useRef<HTMLElement | null>(null)
   const resultRef = useRef<HTMLElement | null>(null)
+  const appendixDialogRef = useRef<HTMLDivElement | null>(null)
+  const appendixConfirmButtonRef = useRef<HTMLButtonElement | null>(null)
   const { register, reset, setValue, watch, formState: { errors }, trigger } = useForm<SourceForm>({
     resolver: zodResolver(sourceSchema), defaultValues: { reportText: initialDraft.reportText }, mode: 'onChange',
   })
@@ -261,7 +264,7 @@ function App() {
     }
   }
 
-  const startAnalysis = async () => {
+  const startAnalysis = async (appendixIsConfirmed = appendixConfirmed) => {
     if (analysisInFlightRef.current || state === 'analyzing') return
     analysisInFlightRef.current = true
 
@@ -282,16 +285,15 @@ function App() {
       return
     }
 
-    let excludeAppendix = appendixConfirmed
+    const excludeAppendix = appendixIsConfirmed
     if (preparedDocument.appendixHeading && !excludeAppendix) {
-      excludeAppendix = window.confirm(`พบส่วน “${preparedDocument.appendixHeading}” จำนวน ${preparedDocument.excludedCharCount.toLocaleString()} ตัวอักษร ระบบจะไม่นำส่วนนี้ไปวิเคราะห์ แต่ข้อความต้นฉบับยังอยู่ครบ\n\nกด “ตกลง” เพื่อยืนยันและส่งตรวจ หรือ “ยกเลิก” เพื่อกลับไปแก้ข้อความ`)
-      if (!excludeAppendix) {
-        setState('input')
-        setAnalysisMessage('ยังไม่ได้ส่งรายงาน คุณสามารถแก้ข้อความหรือกดตรวจอีกครั้งได้')
-        setAnalysisCanRetry(false)
-        analysisInFlightRef.current = false
-        return
-      }
+      setAppendixConfirmationOpen(true)
+      setAnalysisMessage(null)
+      setAnalysisCanRetry(false)
+      analysisInFlightRef.current = false
+      return
+    }
+    if (preparedDocument.appendixHeading && excludeAppendix) {
       setAppendixConfirmed(true)
     }
 
@@ -448,6 +450,52 @@ function App() {
     setResultActionMessage('ดาวน์โหลดผลตรวจแล้ว')
   }
 
+  const cancelAppendixConfirmation = () => {
+    setAppendixConfirmationOpen(false)
+    setState('input')
+    setAnalysisMessage('ยังไม่ได้ส่งรายงาน คุณสามารถแก้ข้อความหรือกดตรวจอีกครั้งได้')
+    setAnalysisCanRetry(false)
+    window.requestAnimationFrame(() => editorRef.current?.focus())
+  }
+
+  const confirmAppendixExclusion = () => {
+    setAppendixConfirmed(true)
+    setAppendixConfirmationOpen(false)
+    void startAnalysis(true)
+  }
+
+  useEffect(() => {
+    if (!appendixConfirmationOpen) return
+
+    const frame = window.requestAnimationFrame(() => appendixConfirmButtonRef.current?.focus())
+    const handleDialogKeys = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        cancelAppendixConfirmation()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusable = appendixDialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+      if (!focusable?.length) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', handleDialogKeys)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.removeEventListener('keydown', handleDialogKeys)
+    }
+  }, [appendixConfirmationOpen])
+
   return (
     <main className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-950">
       <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
@@ -461,6 +509,20 @@ function App() {
             {text.trim() && <Button type="button" size="sm" variant="ghost" onClick={clearDraft} disabled={controlsLocked}><RotateCcw />เริ่มใหม่</Button>}
           </div>
         </header>
+
+        {appendixConfirmationOpen && <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4" role="presentation">
+          <div ref={appendixDialogRef} role="dialog" aria-modal="true" aria-labelledby="appendix-dialog-title" aria-describedby="appendix-dialog-description" className="w-full max-w-lg rounded-xl bg-white p-5 shadow-2xl ring-1 ring-slate-950/10 sm:p-6">
+            <h2 id="appendix-dialog-title" className="text-lg font-semibold text-slate-950">ยืนยันการไม่ส่งภาคผนวก</h2>
+            <div id="appendix-dialog-description" className="mt-3 space-y-3 text-sm leading-6 text-slate-700">
+              <p>พบส่วน “{preparedDocument.appendixHeading}” จำนวน {preparedDocument.excludedCharCount.toLocaleString()} ตัวอักษร</p>
+              <p>ระบบจะไม่นำส่วนนี้ไปวิเคราะห์ แต่ข้อความต้นฉบับยังอยู่ครบ หากยังไม่พร้อม คุณสามารถกลับไปแก้ข้อความได้โดยยังไม่ส่งข้อมูลไปยัง AI</p>
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button type="button" variant="outline" onClick={cancelAppendixConfirmation}>กลับไปแก้ข้อความ</Button>
+              <Button ref={appendixConfirmButtonRef} type="button" onClick={confirmAppendixExclusion}>ยืนยันและส่งตรวจ</Button>
+            </div>
+          </div>
+        </div>}
 
         <Alert className="mb-5 border-amber-200 bg-amber-50 text-amber-950">
           <AlertCircle className="size-4" />
@@ -499,7 +561,7 @@ function App() {
               </div>
               {warnings.map((warning) => <Alert key={warning} className="border-amber-200 bg-amber-50 text-amber-950"><AlertCircle className="size-4" /><AlertTitle>โปรดตรวจข้อความจาก PDF</AlertTitle><AlertDescription>{warning}</AlertDescription></Alert>)}
               <div className="space-y-2">
-                <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={startAnalysis} disabled={!canAnalyze}><CheckCircle2 />ตรวจรายงาน</Button>
+                <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={() => void startAnalysis()} disabled={!canAnalyze}><CheckCircle2 />ตรวจรายงาน</Button>
                 {!text.trim() && <p className="text-sm text-slate-500">วางข้อความหรือเลือก PDF ก่อน ปุ่มนี้จึงจะกดได้</p>}
                 {text.trim() && !rubricValidation.success && <p className="text-sm text-red-700">โปรดแก้เกณฑ์การตรวจให้ถูกต้องก่อนส่ง</p>}
                 <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร และอาจพักผลสำเร็จไว้ไม่เกิน 10 นาทีเพื่อป้องกันการส่งซ้ำ <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
@@ -533,7 +595,7 @@ function App() {
 
         {state === 'analyzing' && <section ref={analyzingRef} tabIndex={-1} className="mt-5 scroll-mt-4 outline-none" aria-label="กำลังตรวจรายงาน" aria-live="polite"><Card><CardHeader><CardTitle className="flex items-center gap-2"><LoaderCircle className="size-4 animate-spin" />กำลังตรวจรายงาน</CardTitle><CardDescription>รายการด้านล่างเป็นความคืบหน้าโดยประมาณ เอกสารยาวอาจใช้เวลาถึง 2 นาที</CardDescription></CardHeader><CardContent className="space-y-4"><Progress value={((progressIndex + 1) / analysisSteps.length) * 100} /><ol className="space-y-2 text-sm">{analysisSteps.map((step, index) => <li key={step} className={index < progressIndex ? 'text-emerald-700' : index === progressIndex ? 'font-medium text-indigo-700' : 'text-slate-400'}>{index < progressIndex ? '✓' : index === progressIndex ? '•' : '○'} {step}</li>)}</ol><Button variant="outline" onClick={cancelAnalysis}>ยกเลิกการตรวจ</Button></CardContent></Card></section>}
 
-        {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={startAnalysis}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
+        {analysisMessage && <Alert className={`mt-5 ${state === 'error' ? 'border-red-200 bg-red-50 text-red-950' : 'border-sky-200 bg-sky-50 text-sky-950'}`} aria-live="assertive"><AlertCircle className="size-4" /><AlertTitle>{state === 'error' ? 'ยังตรวจรายงานไม่ได้' : 'สถานะการตรวจ'}</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{analysisMessage}{analysisCanRetry && <Button size="sm" variant="outline" onClick={() => void startAnalysis()}>ลองอีกครั้งด้วยคำขอเดิม</Button>}</AlertDescription></Alert>}
 
         {state === 'result' && result && <section ref={resultRef} tabIndex={-1} className="mt-5 scroll-mt-4 space-y-5 outline-none" aria-label="ผลวิเคราะห์">
           <Card className="border-emerald-200"><CardHeader><CardTitle>ผลตรวจเบื้องต้น</CardTitle><CardDescription>โมเดล {result.model} · เกณฑ์รุ่น {result.rubricVersion}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-sm text-slate-600">คะแนนรวมคำนวณด้วยโค้ดจากหัวข้อที่เปิดใช้งาน</p><p className="mt-1 text-5xl font-semibold text-emerald-700">{result.overallScore}%</p></div><div className="flex flex-wrap gap-2"><Badge variant="outline">{result.sections.length} หัวข้อ</Badge><Button variant="outline" onClick={copyResult}><Copy />คัดลอกผล</Button><Button variant="outline" onClick={downloadResult}><Download />ดาวน์โหลด .txt</Button><Button variant="outline" onClick={prepareNewAnalysis}>แก้ไขแล้วตรวจใหม่</Button></div></div>{resultActionMessage && <p className="text-sm text-indigo-700" aria-live="polite">{resultActionMessage}</p>}</CardContent></Card>

@@ -24,6 +24,7 @@ playwright-report
 output
 worker-startup.cpuprofile
 .tmp-workers-types-latest
+.testsprite/runs/
 
 # Editor directories and files
 .vscode/*

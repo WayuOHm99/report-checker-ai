@@ -83,13 +83,17 @@ test('a multi-column PDF warns the user to verify reading order', async ({ page 
 })
 
 test('appendix exclusion is explicit in a confirmation dialog', async ({ page }) => {
-  await page.getByLabel('ข้อความรายงาน').fill('บทนำ\nเนื้อหาหลักสำหรับประเมินโครงสร้างรายงาน\n\nภาคผนวก ก\nข้อมูลดิบที่ไม่ควรส่งไปวิเคราะห์')
-  let confirmation = ''
-  page.once('dialog', async (dialog) => {
-    confirmation = dialog.message()
-    await dialog.accept()
-  })
+  const report = 'บทนำ\nเนื้อหาหลักสำหรับประเมินโครงสร้างรายงาน\n\nภาคผนวก ก\nข้อมูลดิบที่ไม่ควรส่งไปวิเคราะห์'
+  await page.getByLabel('ข้อความรายงาน').fill(report)
   await page.getByRole('button', { name: 'ตรวจรายงาน' }).click()
+  const dialog = page.getByRole('dialog', { name: 'ยืนยันการไม่ส่งภาคผนวก' })
+  await expect(dialog).toContainText('ระบบจะไม่นำส่วนนี้ไปวิเคราะห์')
+  await page.getByRole('button', { name: 'กลับไปแก้ข้อความ' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByLabel('ข้อความรายงาน')).toHaveValue(report)
+  await expect(page.getByText(/ยังไม่ได้ส่งรายงาน/)).toBeVisible()
+
+  await page.getByRole('button', { name: 'ตรวจรายงาน' }).click()
+  await page.getByRole('button', { name: 'ยืนยันและส่งตรวจ' }).click()
   await expect(page.getByRole('region', { name: 'ผลวิเคราะห์' })).toBeVisible()
-  expect(confirmation).toContain('ระบบจะไม่นำส่วนนี้ไปวิเคราะห์')
 })

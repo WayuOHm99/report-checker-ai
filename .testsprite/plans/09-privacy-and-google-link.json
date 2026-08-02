@@ -1,0 +1,13 @@
+{
+  "projectId": "c76aad7a-c7f9-44a8-a888-a842a4cd386e",
+  "type": "frontend",
+  "name": "ข้อความความเป็นส่วนตัวและลิงก์นโยบาย",
+  "description": "ตรวจว่าผู้ใช้เห็นข้อมูลการส่งข้อมูลและลิงก์นโยบายก่อนใช้งาน",
+  "priority": "p2",
+  "planSteps": [
+    { "type": "action", "description": "เปิดหน้าแรกและเลื่อนไปบริเวณปุ่ม 'ตรวจรายงาน'" },
+    { "type": "assertion", "description": "เห็นข้อความว่าเนื้อหารายงานหลักจะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker เมื่อกดตรวจ" },
+    { "type": "assertion", "description": "เห็นข้อความว่าระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร" },
+    { "type": "assertion", "description": "มีลิงก์ 'นโยบายของ Google' และปลายทางลิงก์อยู่ภายใต้ policies.google.com" }
+  ]
+}

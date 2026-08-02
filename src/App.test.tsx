@@ -70,13 +70,27 @@ describe('App', () => {
 
   it('asks before excluding an appendix and does not send when cancelled', async () => {
     const user = userEvent.setup()
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<App />)
+    const report = 'บทนำ\nเนื้อหาหลัก\n\nภาคผนวก ก\nข้อมูลดิบ'
+    await user.type(screen.getByLabelText('ข้อความรายงาน'), report)
+    await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
+    const dialog = screen.getByRole('dialog', { name: 'ยืนยันการไม่ส่งภาคผนวก' })
+    expect(dialog).toHaveTextContent('ระบบจะไม่นำส่วนนี้ไปวิเคราะห์')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'ยืนยันและส่งตรวจ' })).toHaveFocus())
+    expect(screen.queryByRole('region', { name: 'ผลวิเคราะห์' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'กลับไปแก้ข้อความ' }))
+    expect(screen.queryByRole('dialog', { name: 'ยืนยันการไม่ส่งภาคผนวก' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('ข้อความรายงาน')).toHaveValue(report)
+    expect(screen.getByText(/ยังไม่ได้ส่งรายงาน/)).toBeInTheDocument()
+  })
+
+  it('analyzes only after appendix exclusion is explicitly confirmed', async () => {
+    const user = userEvent.setup()
     render(<App />)
     await user.type(screen.getByLabelText('ข้อความรายงาน'), 'บทนำ\nเนื้อหาหลัก\n\nภาคผนวก ก\nข้อมูลดิบ')
     await user.click(screen.getByRole('button', { name: 'ตรวจรายงาน' }))
-    expect(confirm).toHaveBeenCalledWith(expect.stringMatching(/ระบบจะไม่นำส่วนนี้ไปวิเคราะห์/))
-    expect(screen.queryByRole('region', { name: 'ผลวิเคราะห์' })).not.toBeInTheDocument()
-    expect(screen.getByText(/ยังไม่ได้ส่งรายงาน/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'ยืนยันและส่งตรวจ' }))
+    expect(await screen.findByRole('region', { name: 'ผลวิเคราะห์' })).toBeInTheDocument()
   })
 
   it('restores a draft only from the current browser session', () => {
