@@ -17,7 +17,7 @@ export type ReferenceCheckSummary = {
 }
 
 const bibliographyHeadingPattern = /^\s*(เอกสารอ้างอิง|บรรณานุกรม|references|bibliography)\s*:?[\s]*$/i
-const inlineBibliographyHeadingPattern = /(^|[\r\n]|[.!?]\s+)(เอกสารอ้างอิง|บรรณานุกรม|references|bibliography)\s*:?\s+(?=\S)/i
+const inlineBibliographyHeadingPattern = /(^|\s+)(เอกสารอ้างอิง|บรรณานุกรม|references|bibliography)\s*:?\s+(?=\S)/gi
 const numberedEntryPattern = /^\s*(\d+)\s*[.)]\s*(.+)$/
 const yearPattern = /\b(?:19|20|24|25)\d{2}[a-z]?\b/i
 const numericCitationPattern = /\[(\d+(?:\s*[,;–-]\s*\d+)*)\]/g
@@ -51,7 +51,13 @@ function getNumericCitations(text: string) {
 export function analyzeReferences(reportText: string): ReferenceCheckSummary {
   const lines = reportText.split(/\r?\n/)
   const bibliographyIndex = lines.findIndex((line) => bibliographyHeadingPattern.test(line))
-  const inlineHeading = bibliographyIndex === -1 ? reportText.match(inlineBibliographyHeadingPattern) : null
+  const inlineHeading = bibliographyIndex === -1
+    ? [...reportText.matchAll(inlineBibliographyHeadingPattern)].reverse().find((match) => {
+        const entryStart = (match.index ?? 0) + match[0].length
+        const entryPreview = reportText.slice(entryStart, entryStart + 1_000).trimStart()
+        return yearPattern.test(entryPreview) || numberedEntryPattern.test(entryPreview)
+      }) ?? null
+    : null
   const inlineHeadingStart = inlineHeading?.index === undefined ? -1 : inlineHeading.index + inlineHeading[1].length
   const bibliographyHeading = bibliographyIndex !== -1
     ? lines[bibliographyIndex].trim()

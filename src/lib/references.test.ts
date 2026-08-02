@@ -34,7 +34,7 @@ describe('analyzeReferences', () => {
   })
 
   it('recognizes an inline bibliography heading after a sentence', () => {
-    const result = analyzeReferences('สรุปผลการศึกษาเรียบร้อยแล้ว. เอกสารอ้างอิง กรมทรัพยากรน้ำ. (2567). แนวทางการใช้น้ำอย่างประหยัด')
+    const result = analyzeReferences('สรุปผลการศึกษาเรียบร้อยแล้ว เอกสารอ้างอิง กรมทรัพยากรน้ำ. (2567). แนวทางการใช้น้ำอย่างประหยัด')
 
     expect(result.bibliographyHeading).toBe('เอกสารอ้างอิง')
     expect(result.bibliographyEntryCount).toBe(1)
