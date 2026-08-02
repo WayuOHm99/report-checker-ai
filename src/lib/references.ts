@@ -17,6 +17,7 @@ export type ReferenceCheckSummary = {
 }
 
 const bibliographyHeadingPattern = /^\s*(เอกสารอ้างอิง|บรรณานุกรม|references|bibliography)\s*:?[\s]*$/i
+const inlineBibliographyHeadingPattern = /(^|[\r\n]|[.!?]\s+)(เอกสารอ้างอิง|บรรณานุกรม|references|bibliography)\s*:?\s+(?=\S)/i
 const numberedEntryPattern = /^\s*(\d+)\s*[.)]\s*(.+)$/
 const yearPattern = /\b(?:19|20|24|25)\d{2}[a-z]?\b/i
 const numericCitationPattern = /\[(\d+(?:\s*[,;–-]\s*\d+)*)\]/g
@@ -50,8 +51,22 @@ function getNumericCitations(text: string) {
 export function analyzeReferences(reportText: string): ReferenceCheckSummary {
   const lines = reportText.split(/\r?\n/)
   const bibliographyIndex = lines.findIndex((line) => bibliographyHeadingPattern.test(line))
-  const mainText = bibliographyIndex === -1 ? reportText : lines.slice(0, bibliographyIndex).join('\n')
-  const bibliographyLines = bibliographyIndex === -1 ? [] : lines.slice(bibliographyIndex + 1).map((line) => line.trim()).filter(Boolean)
+  const inlineHeading = bibliographyIndex === -1 ? reportText.match(inlineBibliographyHeadingPattern) : null
+  const inlineHeadingStart = inlineHeading?.index === undefined ? -1 : inlineHeading.index + inlineHeading[1].length
+  const bibliographyHeading = bibliographyIndex !== -1
+    ? lines[bibliographyIndex].trim()
+    : inlineHeading?.[2] ?? null
+  const mainText = bibliographyIndex !== -1
+    ? lines.slice(0, bibliographyIndex).join('\n')
+    : inlineHeading && inlineHeadingStart !== -1
+      ? reportText.slice(0, inlineHeadingStart).trimEnd()
+      : reportText
+  const bibliographyText = bibliographyIndex !== -1
+    ? lines.slice(bibliographyIndex + 1).join('\n')
+    : inlineHeading
+      ? reportText.slice((inlineHeading.index ?? 0) + inlineHeading[0].length)
+      : ''
+  const bibliographyLines = bibliographyText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
   const numericCitationIds = getNumericCitations(mainText)
   const authorYearCitationCount = [...mainText.matchAll(authorYearCitationPattern)].length + [...mainText.matchAll(narrativeAuthorYearPattern)].length
 
@@ -67,14 +82,14 @@ export function analyzeReferences(reportText: string): ReferenceCheckSummary {
     .map((entry) => `${entry.id}. ${entry.label}`)
 
   const warnings: string[] = []
-  if (bibliographyIndex === -1) warnings.push('ไม่พบหัวข้อ “เอกสารอ้างอิง” หรือ “บรรณานุกรม” ที่ตรวจจับได้')
-  if (bibliographyIndex !== -1 && referenceEntries.length === 0) warnings.push('พบหัวข้อบรรณานุกรม แต่ยังไม่พบรายการที่มีรูปแบบปีหรือเลขลำดับ')
+  if (!bibliographyHeading) warnings.push('ไม่พบหัวข้อ “เอกสารอ้างอิง” หรือ “บรรณานุกรม” ที่ตรวจจับได้')
+  if (bibliographyHeading && referenceEntries.length === 0) warnings.push('พบหัวข้อบรรณานุกรม แต่ยังไม่พบรายการที่มีรูปแบบปีหรือเลขลำดับ')
   if (numericCitationIds.length > 0 && numberedEntries.length === 0) warnings.push('พบการอ้างอิงแบบตัวเลขในเนื้อหา แต่ไม่พบรายการท้ายเล่มแบบมีเลขลำดับ')
   if (unmatchedNumericCitationIds.length > 0) warnings.push(`เลขอ้างอิงที่อาจไม่มีรายการท้ายเล่ม: ${unmatchedNumericCitationIds.join(', ')}`)
   if (potentiallyUncitedEntries.length > 0) warnings.push(`มีรายการท้ายเล่มที่อาจไม่ได้ถูกอ้างในเนื้อหา ${potentiallyUncitedEntries.length} รายการ`)
 
   return {
-    bibliographyHeading: bibliographyIndex === -1 ? null : lines[bibliographyIndex].trim(),
+    bibliographyHeading,
     bibliographyEntryCount: referenceEntries.length,
     numericCitationIds,
     authorYearCitationCount,
@@ -82,7 +97,7 @@ export function analyzeReferences(reportText: string): ReferenceCheckSummary {
     potentiallyUncitedEntries,
     warnings,
     aiSummary: {
-      bibliographyDetected: bibliographyIndex !== -1,
+      bibliographyDetected: Boolean(bibliographyHeading),
       bibliographyEntryCount: referenceEntries.length,
       numericCitationCount: numericCitationIds.length,
       authorYearCitationCount,

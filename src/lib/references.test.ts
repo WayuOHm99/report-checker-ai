@@ -32,4 +32,13 @@ describe('analyzeReferences', () => {
     expect(result.numericCitationIds).toEqual([1, 2, 3])
     expect(result.unmatchedNumericCitationIds).toEqual([])
   })
+
+  it('recognizes an inline bibliography heading after a sentence', () => {
+    const result = analyzeReferences('สรุปผลการศึกษาเรียบร้อยแล้ว. เอกสารอ้างอิง กรมทรัพยากรน้ำ. (2567). แนวทางการใช้น้ำอย่างประหยัด')
+
+    expect(result.bibliographyHeading).toBe('เอกสารอ้างอิง')
+    expect(result.bibliographyEntryCount).toBe(1)
+    expect(result.aiSummary.bibliographyDetected).toBe(true)
+    expect(result.warnings).not.toContain('ไม่พบหัวข้อ “เอกสารอ้างอิง” หรือ “บรรณานุกรม” ที่ตรวจจับได้')
+  })
 })
