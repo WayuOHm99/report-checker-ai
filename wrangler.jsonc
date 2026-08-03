@@ -18,7 +18,10 @@
     "MOCK_ANALYSIS": "false",
     "DAILY_BUDGET_LIMIT": "100",
     "DAILY_TOKEN_BUDGET": "2000000",
-    "ALLOWED_ORIGIN": "https://rubriclensai.pages.dev"
+    // Both public origins: the Pages deployment serving today, and the custom
+    // domain once its DNS is live. A dashboard edit that drops either one breaks
+    // the browser preflight with an opaque "Failed to fetch".
+    "ALLOWED_ORIGIN": "https://rubriclensai.pages.dev,https://rubriclensai.com"
   },
   "kv_namespaces": [
     {
