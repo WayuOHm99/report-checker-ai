@@ -1,11 +1,32 @@
 # Screenshots
 
-ใช้โฟลเดอร์นี้เก็บภาพสำหรับ portfolio เช่น:
+ภาพในโฟลเดอร์นี้ใช้ประกอบ `README.md` และ `README.th.md`
 
-- `01-home.png` — empty state และ primary CTA
-- `02-pdf-preview.png` — PDF text-layer preview
-- `03-rubric-editor.png` — advanced rubric editor
-- `04-result.png` — score, evidence และ recommendations
-- `05-mobile.png` — mobile layout
+| ไฟล์ | แสดงอะไร |
+| --- | --- |
+| `01-home.png` | หน้าเริ่มต้นและ empty state |
+| `02-rubric-editor.png` | ตัวแก้เกณฑ์ขั้นสูงของรายงานวิจัย (13 หัวข้อ) |
+| `03-analyzing.png` | สถานะกำลังตรวจ พร้อมปุ่มยกเลิก |
+| `04-result.png` | คะแนนรวม สิ่งที่ควรแก้ก่อนส่ง และหลักฐาน |
+| `05-mobile.png` | ผลตรวจบนหน้าจอขนาดมือถือ (Pixel 5) |
 
-ควรใช้ข้อมูลสังเคราะห์เท่านั้น และตรวจให้แน่ใจว่าไม่มีชื่อ, email, student ID หรือเนื้อหารายงานจริงในภาพก่อน commit
+## สร้างภาพใหม่
+
+```bash
+npm run screenshots
+```
+
+คำสั่งนี้ build ใหม่ก่อนเสมอ แล้วให้ Playwright เก็บภาพจาก production build จริงผ่าน `vite preview`
+ตามสคริปต์ `scripts/screenshots/capture.spec.ts` — **ห้ามแคปมือ** เพราะภาพที่แคปมือจะค้างเป็นของเก่า
+เงียบ ๆ เมื่อ UI เปลี่ยน
+
+การเก็บภาพใช้ config แยก (`playwright.screenshots.config.ts`) จึงไม่ปนกับชุดทดสอบใน `npm run verify`
+และ CI
+
+## กติกาของภาพในโฟลเดอร์นี้
+
+- **ใช้ข้อมูลสังเคราะห์เท่านั้น** รายงานตัวอย่างอยู่ในสคริปต์ ไม่มีชื่อ อีเมล รหัสนักศึกษา หรือ
+  เนื้อหารายงานจริง
+- คำตอบของ API ถูกดักไว้ในเครื่องเหมือนที่ชุด E2E ทำ การเก็บภาพจึงไม่เรียก Gemini
+  ไม่ต้องใช้ API key และไม่มีค่าใช้จ่าย
+- ชื่อโมเดลในภาพขึ้นว่า `demo-stub-model` เพื่อไม่ให้ภาพถูกเข้าใจผิดว่าเป็นผลจากการเรียกโมเดลจริง

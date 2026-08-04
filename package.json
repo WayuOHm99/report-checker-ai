@@ -1,7 +1,30 @@
 {
   "name": "rubriclens-ai",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "AI-assisted document review that scores a report against a configurable rubric. React 19 SPA on Cloudflare Pages, Cloudflare Worker API, Google Gemini.",
+  "keywords": [
+    "react",
+    "typescript",
+    "cloudflare-workers",
+    "cloudflare-pages",
+    "gemini",
+    "ai",
+    "rubric",
+    "document-review",
+    "vite",
+    "playwright"
+  ],
+  "homepage": "https://rubriclensai.pages.dev/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WayuOHm99/rubriclens-ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/WayuOHm99/rubriclens-ai/issues"
+  },
+  "author": "WayuOHm99 (https://github.com/WayuOHm99)",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -15,6 +38,7 @@
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:only": "playwright test",
+    "screenshots": "npm run build && playwright test --config=playwright.screenshots.config.ts",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "verify": "npm run lint && npm run test && npm run worker:check && npm run audit:prod && npm run test:e2e",
     "worker:dev": "wrangler dev",

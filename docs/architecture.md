@@ -13,6 +13,7 @@
 ### Frontend (`src/`)
 
 - `App.tsx` เป็น workflow หลัก: input, PDF preview, rubric editor, analysis progress และ result review
+- `src/components/ui/` เก็บชิ้นส่วน UI แบบ shadcn (alert, badge, button, card, input, progress, textarea) และ `src/lib/utils.ts` เก็บ `cn` ที่ชิ้นส่วนเหล่านี้ใช้ ทั้งคู่ถูกเรียกผ่านชื่อย่อ `@/` ซึ่ง `tsconfig.app.json` และ `vite.config.ts` ชี้ไปที่ `src/`
 - `src/lib/document.ts` เตรียม main text, แยก appendix และประกาศขีดจำกัดไฟล์ทั้งขนาด (10 MB) และจำนวนหน้า (400 หน้า) ไว้ที่เดียวกัน
 - `src/lib/pdf.ts` extract text layer พร้อม progress, abort และ warning สำหรับ scanned/multi-column PDF และตรวจจำนวนหน้าทันทีหลังเปิดไฟล์ก่อนเริ่ม loop
 - `src/lib/references.ts` ตรวจ citation/reference ด้วยกฎ deterministic ก่อนส่ง summary ให้ AI

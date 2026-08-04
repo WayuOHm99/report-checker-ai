@@ -6,7 +6,30 @@
 
 **สถานะ: ผ่าน automated quality gates ทั้งหมด**
 
-ตรวจล่าสุด 2 สิงหาคม 2026 ด้วย Node.js 24 บน working tree ที่มี production hardening รอบนี้
+### รอบล่าสุด — 4 สิงหาคม 2026 (หลังจัดโครงสร้าง repo สำหรับ portfolio)
+
+รันบน Node.js 24 บน working tree ปัจจุบัน หลังย้าย `@/components/ui` เข้า `src/components/ui`
+และเพิ่มสคริปต์เก็บภาพหน้าจอ
+
+| Layer | Command | Result |
+| --- | --- | --- |
+| Static analysis | `npm run lint` | passed |
+| Unit/component | `npm run test` | 115/115 passed |
+| Worker bundle and bindings | `npm run worker:check` | passed |
+| Production dependency audit | `npm run audit:prod` | passed (ไม่มี high/critical) — มี moderate ค้าง 1 รายการ |
+| Production build | `npm run build` | passed |
+| Production-preview E2E | `npm run test:e2e` | 72/72 passed |
+
+**รายการ moderate ที่ค้างอยู่:** `hono@4.12.33` มีช่องโหว่ ReDoS ใน CORS middleware
+([GHSA-8j4g-w8fx-2239](https://github.com/advisories/GHSA-8j4g-w8fx-2239)) ติดมาทางอ้อมผ่าน
+`@google/genai` → `@modelcontextprotocol/sdk` ซึ่งเป็นเส้นทางที่โปรเจกต์นี้ไม่ได้เรียกใช้
+ด่าน `audit:prod` ตั้งเกณฑ์ไว้ที่ high จึงไม่ทำให้ CI แดง — **ยังไม่ได้แก้ และยังไม่ได้ตัดสินใจว่าจะอัปเดตเมื่อไร**
+
+`npm ci` ในสำเนาสะอาดยังไม่ได้รันซ้ำในรอบนี้ ผลด้านล่างของวันที่ 2 สิงหาคม 2026 จึงยังเป็นหลักฐานล่าสุดของขั้นนั้น
+
+### รอบก่อนหน้า — 2 สิงหาคม 2026
+
+ตรวจด้วย Node.js 24 บน working tree ที่มี production hardening รอบนั้น
 
 | Layer | Command | Result |
 | --- | --- | --- |
