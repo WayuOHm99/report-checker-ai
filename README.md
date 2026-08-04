@@ -66,7 +66,7 @@ production build, so they cannot silently go stale after a UI change.
 
 ```mermaid
 flowchart LR
-  U[User] --> FE[React + Vite SPA\nCloudflare Pages]
+  U[User] --> FE[React + Vite app\n+ static legal pages\nCloudflare Pages]
   FE --> DOC[Document prep\nPDF text layer + appendix]
   FE --> REF[Citation and\nreference check]
   FE -->|POST /api/analyze| W[Cloudflare Worker]
@@ -182,13 +182,14 @@ and rollback: [docs/deployment-runbook.md](docs/deployment-runbook.md).
 ```text
 src/                 React app, UI state and domain logic
 src/components/ui/   shadcn-style primitives (imported through the `@/` alias)
+src/pages/           Privacy policy and terms of service, built as their own HTML entries
 shared/              API contract, scoring formula and document types — used by both sides
 worker/              Cloudflare Worker API and server-side validation
 e2e/                 Playwright flows across desktop, mobile and three browser engines
 scripts/screenshots/ Playwright capture run for the images in this README
-public/              Static assets, security headers, sitemap, social preview
+public/              Static assets, security headers, sitemap, 404 page, social preview
 docs/                Architecture, deployment runbook, testing report, screenshots
-.testsprite/         TestSprite project config and 10 scenario plans
+.testsprite/         TestSprite project config and 11 scenario plans
 .github/workflows/   CI quality gate
 ```
 
@@ -201,8 +202,12 @@ docs/                Architecture, deployment runbook, testing report, screensho
 - KV holds rate-limit counters and 10-minute idempotency records — which may include short evidence
   excerpts the model quoted, but never the original document or uploaded file.
 - Document text, model findings and rubric content are all treated as untrusted input in every prompt.
+- No cookies, no analytics, no third-party scripts — so the site needs no consent banner. The two
+  browser storage keys it does use are declared in `src/lib/browser-storage.ts`, which is the same
+  source the published policy page renders, and a test fails if the two drift apart.
 
-Details: [SECURITY.md](SECURITY.md).
+Published pages: [`/privacy`](https://rubriclensai.pages.dev/privacy) (includes the cookie
+disclosure) and [`/terms`](https://rubriclensai.pages.dev/terms). Details: [SECURITY.md](SECURITY.md).
 
 ## How this repository is maintained
 

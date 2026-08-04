@@ -6,7 +6,34 @@
 
 **สถานะ: ผ่าน automated quality gates ทั้งหมด**
 
-### รอบล่าสุด — 4 สิงหาคม 2026 (หลังจัดโครงสร้าง repo สำหรับ portfolio)
+### รอบล่าสุด — 4 สิงหาคม 2026 (หลังเพิ่มหน้ากฎหมายและท้ายเว็บ)
+
+รันบน Node.js 24 หลังเพิ่มหน้า `/privacy` (รวมหัวข้อคุกกี้), หน้า `/terms`,
+ท้ายเว็บแบบโปรดักต์ และเปลี่ยน build เป็น multi-page (สามหน้า)
+
+| Layer | Command | Result |
+| --- | --- | --- |
+| Static analysis | `npm run lint` | passed |
+| Unit/component | `npm run test` | 133/133 passed (เพิ่ม 18 เคสของหน้ากฎหมายและท้ายเว็บ) |
+| Worker bundle and bindings | `npm run worker:check` | passed |
+| Production dependency audit | `npm run audit:prod` | passed (ไม่มี high/critical) — moderate ค้าง 1 รายการเดิม |
+| Production build | `npm run build` | passed — ได้ `index.html`, `privacy.html`, `terms.html` และคัดลอก `public/404.html` |
+| Production-preview E2E | `npm run test:e2e` | 88/88 passed (เพิ่ม `e2e/legal-pages.spec.ts` 4 เคส × 4 browser project) |
+| Documentation screenshots | `npm run screenshots` | 5/5 captured — เก็บใหม่หลัง UI เปลี่ยน |
+
+`e2e/legal-pages.spec.ts` ตรวจสิ่งที่เทสต์ระดับ component ตรวจแทนไม่ได้ คือ URL `/privacy` และ `/terms`
+เปิดได้จริงบนบันเดิลที่จะ deploy, การคลิกจากท้ายเว็บพาไปถูกหน้า, ปุ่มกลับหน้าแรกใช้ได้
+และหน้ากฎหมายไม่เขียนอะไรลงที่เก็บข้อมูลของเบราว์เซอร์เลย
+
+ระหว่างทาง `App.test.tsx` เคสเดิม “uses one primary action without an age gate or privacy card”
+จับได้ว่าป้ายลิงก์ footer คำว่า “ความเป็นส่วนตัว” ไปชนด่านที่กันการ์ดขอความยินยอมแบบเก่า
+แก้ที่โค้ดโดยเปลี่ยนป้ายเป็นชื่อเต็ม ไม่ได้แก้เคสเดิม
+
+ตรวจเพิ่มด้วยมือว่า `/privacy` และ `/terms` เปิดได้ทั้งบน dev server และ `vite preview`
+(ตอบ 200 พร้อม `<title>` ของหน้านั้นจริง ไม่ใช่ fallback ไปหน้าแรก) ยังไม่ได้ตรวจบน production
+เพราะยังไม่ได้ deploy
+
+### รอบก่อนหน้า — 4 สิงหาคม 2026 (หลังจัดโครงสร้าง repo สำหรับ portfolio)
 
 รันบน Node.js 24 บน working tree ปัจจุบัน หลังย้าย `@/components/ui` เข้า `src/components/ui`
 และเพิ่มสคริปต์เก็บภาพหน้าจอ
@@ -84,6 +111,9 @@ npm run verify
 - fresh mobile agent run `10c4b318-7740-4ad7-b653-f71faad3c02a` ถูก block เพราะ runner ไม่มีคำสั่งเปลี่ยน viewport ไม่ใช่ application failure; ดาวน์โหลด artifact และยืนยันด้วย saved-code mobile run ข้างต้นแล้ว
 
 TestSprite CLI `0.4.0` รันกับ production URL โดยตรง ผลสุดท้ายใน project `c76aad7a-c7f9-44a8-a888-a842a4cd386e` คือ **10/10 scenarios passed**
+
+แผนที่ 11 (`.testsprite/plans/11-legal-pages.json`) ครอบหน้านโยบาย ข้อกำหนด และหน้า 404
+**ยังไม่ได้รัน** เพราะ TestSprite ทดสอบ URL ที่ deploy แล้วเท่านั้น และรอบนี้ยังไม่ได้ deploy
 
 | Scenario | Latest production run | Result |
 | --- | --- | --- |

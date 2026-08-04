@@ -2,7 +2,7 @@
   "name": "rubriclens-ai",
   "private": true,
   "version": "1.0.0",
-  "description": "AI-assisted document review that scores a report against a configurable rubric. React 19 SPA on Cloudflare Pages, Cloudflare Worker API, Google Gemini.",
+  "description": "AI-assisted document review that scores a report against a configurable rubric. React 19 on Cloudflare Pages, Cloudflare Worker API, Google Gemini.",
   "keywords": [
     "react",
     "typescript",

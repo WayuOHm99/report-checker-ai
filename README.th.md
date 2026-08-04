@@ -64,7 +64,7 @@ RubricLensAi รับข้อความ (พิมพ์ วาง หรื
 
 ```mermaid
 flowchart LR
-  U[ผู้ใช้] --> FE[React + Vite SPA\nCloudflare Pages]
+  U[ผู้ใช้] --> FE[React + Vite\n+ หน้ากฎหมายแบบ static\nCloudflare Pages]
   FE --> DOC[เตรียมเอกสาร\nPDF text layer + appendix]
   FE --> REF[ตรวจ citation\nและ reference summary]
   FE -->|POST /api/analyze| W[Cloudflare Worker]
@@ -177,13 +177,14 @@ dashboard เคยทำให้โปรเจกต์นี้พังม�
 ```text
 src/                 React app, UI state และ domain logic
 src/components/ui/   ชิ้นส่วน UI แบบ shadcn (เรียกผ่านชื่อย่อ `@/`)
+src/pages/           หน้านโยบายความเป็นส่วนตัวและข้อกำหนดการใช้งาน build เป็นหน้า HTML ของตัวเอง
 shared/              API contract, สูตรคะแนน และนิยามประเภทเอกสาร ใช้ร่วมกันสองฝั่ง
 worker/              Cloudflare Worker API และ validation ฝั่งเซิร์ฟเวอร์
 e2e/                 Playwright flows บน desktop/mobile และ 3 browser engine
 scripts/screenshots/ สคริปต์เก็บภาพหน้าจอสำหรับเอกสาร
-public/              static assets, security headers, sitemap และ social preview
+public/              static assets, security headers, sitemap, หน้า 404 และ social preview
 docs/                สถาปัตยกรรม, ขั้นตอน deploy, รายงานการทดสอบ, ภาพหน้าจอ
-.testsprite/         config และ 10 scenario plans ของ TestSprite
+.testsprite/         config และ 11 scenario plans ของ TestSprite
 .github/workflows/   CI quality gate
 ```
 
@@ -196,8 +197,12 @@ docs/                สถาปัตยกรรม, ขั้นตอน de
 - KV เก็บแค่ตัวนับ rate limit และผล idempotency อายุ 10 นาที ซึ่งอาจมีข้อความอ้างอิงสั้น ๆ ที่ AI ยกมา
   แต่ไม่มีเอกสารต้นฉบับหรือไฟล์ที่อัปโหลด
 - ข้อความเอกสาร ผลจากโมเดล และเนื้อหาเกณฑ์ ถูกปฏิบัติเป็น untrusted input ในทุก prompt
+- ไม่มีคุกกี้ ไม่มีระบบเก็บสถิติ ไม่มีสคริปต์จากภายนอก จึงไม่ต้องมีแถบขอความยินยอม ส่วนคีย์ที่เก็บใน
+  เบราว์เซอร์ 2 ตัวประกาศไว้ที่ `src/lib/browser-storage.ts` ซึ่งเป็นแหล่งเดียวกับที่หน้านโยบายอ่านไปแสดง
+  และมี test คุมไม่ให้ทั้งสองหลุดจากกัน
 
-รายละเอียด: [SECURITY.md](SECURITY.md)
+หน้าที่เผยแพร่: [`/privacy`](https://rubriclensai.pages.dev/privacy) (รวมเรื่องคุกกี้ไว้ในหน้านี้)
+และ [`/terms`](https://rubriclensai.pages.dev/terms) — รายละเอียด: [SECURITY.md](SECURITY.md)
 
 ## โปรเจกต์นี้ดูแลยังไง
 

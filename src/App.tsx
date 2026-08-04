@@ -11,6 +11,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
+import { SiteFooter } from '@/components/SiteFooter'
+// ชื่อคีย์ที่เก็บบนเครื่องผู้ใช้อยู่ในไฟล์เดียวกับที่หน้านโยบายคุกกี้อ่านไปแสดง
+// เปลี่ยนชื่อคีย์ที่นั่นที่เดียว แล้วโค้ดกับนโยบายจะตรงกันเสมอ
+import { ANONYMOUS_TOKEN_KEY, LEGACY_ANONYMOUS_TOKEN_KEY, LEGACY_SESSION_DRAFT_KEY, SESSION_DRAFT_KEY } from '@/lib/browser-storage'
+import { PRIVACY_POLICY_PATH } from '@/lib/site-info'
 import { API_VERSION, API_VERSION_HEADER } from '../shared/api-contract'
 import { createMockAnalysis, formatAnalysisResult, formatOverallScore, isNotApplicable, NOT_APPLICABLE_BADGE, parseAnalysisResponse, type AnalysisResult } from './lib/analysis'
 import { isLikelyPdf, MAX_ANALYSIS_CHARS, MAX_FILE_BYTES, MAX_RAW_CHARS, PDF_LIMITS_LABEL, prepareDocument } from './lib/document'
@@ -19,8 +24,6 @@ import { analyzeReferences } from './lib/references'
 import { cloneRubricTemplate, DEFAULT_RUBRIC_TEMPLATE_ID, getDefaultRubricTemplate, getRubricTemplatesForDocumentType, inferDocumentTypeFromTemplate, rubricSchema, rubricSectionSchema, rubricTemplates, type RubricSection } from './lib/rubric'
 import { DOCUMENT_TYPES, documentTypeDefinitions, getDocumentTypeDefinition, type DocumentType } from '../shared/document-types'
 
-const DRAFT_KEY = 'rubriclensai-session-draft-v1'
-const LEGACY_DRAFT_KEY = 'rubriclens-session-draft-v1'
 const PRODUCTION_API_BASE_URL = 'https://rubriclensai-api.oomzazato01.workers.dev/api'
 
 function usesMockAnalysis() {
@@ -70,8 +73,8 @@ const stateLabels: Record<AnalysisState, string> = {
 const analysisSteps = ['ตรวจขนาดเอกสาร', 'เตรียมเกณฑ์การตรวจ', 'ส่งข้อมูลผ่านระบบที่ปลอดภัย', 'AI อ่านเอกสาร', 'ตรวจความครบถ้วนของคำตอบ', 'รวมผลแต่ละหัวข้อ', 'คำนวณคะแนนรวม']
 
 function getAnonymousToken() {
-  const key = 'rubriclensai-anonymous-token'
-  const legacyKey = 'rubriclens-anonymous-token'
+  const key = ANONYMOUS_TOKEN_KEY
+  const legacyKey = LEGACY_ANONYMOUS_TOKEN_KEY
   const token = crypto.randomUUID()
   try {
     const existing = window.localStorage.getItem(key) ?? window.localStorage.getItem(legacyKey)
@@ -85,19 +88,19 @@ function getAnonymousToken() {
 
 function removeStoredDraft() {
   try {
-    window.sessionStorage.removeItem(DRAFT_KEY)
-    window.sessionStorage.removeItem(LEGACY_DRAFT_KEY)
+    window.sessionStorage.removeItem(SESSION_DRAFT_KEY)
+    window.sessionStorage.removeItem(LEGACY_SESSION_DRAFT_KEY)
   } catch { /* Storage may be unavailable. */ }
 }
 
 function saveDraft(draft: Draft) {
-  try { window.sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)) } catch { /* Keep the in-memory form usable. */ }
+  try { window.sessionStorage.setItem(SESSION_DRAFT_KEY, JSON.stringify(draft)) } catch { /* Keep the in-memory form usable. */ }
 }
 
 function loadDraft(): Draft {
   const fallback = cloneRubricTemplate(DEFAULT_RUBRIC_TEMPLATE_ID)
   try {
-    const saved = window.sessionStorage.getItem(DRAFT_KEY) ?? window.sessionStorage.getItem(LEGACY_DRAFT_KEY)
+    const saved = window.sessionStorage.getItem(SESSION_DRAFT_KEY) ?? window.sessionStorage.getItem(LEGACY_SESSION_DRAFT_KEY)
     const parsed = draftSchema.safeParse(saved ? JSON.parse(saved) : null)
     if (parsed.success) {
       const savedTemplate = rubricTemplates.find((template) => template.id === parsed.data.templateId)
@@ -544,6 +547,7 @@ function App() {
   }, [appendixConfirmationOpen])
 
   return (
+    <>
     <main className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-950">
       <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-8">
         <header className="mb-5 flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -611,7 +615,7 @@ function App() {
                 <Button className="min-h-12 w-full text-base sm:w-auto sm:min-w-44" onClick={() => void startAnalysis()} disabled={!canAnalyze}><CheckCircle2 />{documentTypeDefinition.actionLabel}</Button>
                 {!text.trim() && <p className="text-sm text-slate-500">วางข้อความหรือเลือก PDF ก่อน ปุ่มนี้จึงจะกดได้</p>}
                 {text.trim() && !rubricValidation.success && <p className="text-sm text-red-700">โปรดแก้เกณฑ์การตรวจให้ถูกต้องก่อนส่ง</p>}
-                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหาเอกสารหลัก ประเภทเอกสาร และเกณฑ์จะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร และอาจพักผลสำเร็จไว้ไม่เกิน 10 นาทีเพื่อป้องกันการส่งซ้ำ <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
+                <p className="max-w-2xl text-xs leading-5 text-slate-500">เมื่อกดตรวจ เนื้อหาเอกสารหลัก ประเภทเอกสาร และเกณฑ์จะถูกส่งไปยัง Google Gemini ผ่าน Cloudflare Worker ผล AI อาจคลาดเคลื่อน ระบบไม่เก็บไฟล์หรือข้อความต้นฉบับถาวร และอาจพักผลสำเร็จไว้ไม่เกิน 10 นาทีเพื่อป้องกันการส่งซ้ำ <a className="text-indigo-700 underline underline-offset-2" href={PRIVACY_POLICY_PATH}>นโยบายความเป็นส่วนตัวของเรา</a> · <a className="text-indigo-700 underline underline-offset-2" href="https://policies.google.com/privacy" target="_blank" rel="noreferrer">นโยบายของ Google</a></p>
               </div>
             </CardContent>
           </Card>
@@ -686,6 +690,8 @@ function App() {
         </Card>
       </div>
     </main>
+    <SiteFooter />
+    </>
   )
 }
 

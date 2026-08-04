@@ -11,6 +11,18 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      // เว็บนี้มีสามหน้า: หน้าตรวจเอกสาร นโยบายความเป็นส่วนตัว และข้อกำหนดการใช้งาน
+      // แต่ละหน้าต้องมีไฟล์ .html ของตัวเองที่นี่ ไม่งั้น Vite จะ build แค่ index.html
+      // ชื่อไฟล์คือชื่อ URL ที่ได้ (privacy.html -> /privacy บน Cloudflare Pages)
+      input: {
+        main: path.resolve(import.meta.dirname, 'index.html'),
+        privacy: path.resolve(import.meta.dirname, 'privacy.html'),
+        terms: path.resolve(import.meta.dirname, 'terms.html'),
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
