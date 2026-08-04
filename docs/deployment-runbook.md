@@ -98,6 +98,10 @@ npx wrangler pages deploy dist --project-name rubriclensai --branch main
 
 ### 5. Browser smoke
 
+รอประมาณหนึ่งนาทีหลัง deploy ก่อนเริ่มตรวจ — edge cache ของ Cloudflare อาจยังคืนของเดิมอยู่ช่วงสั้น ๆ
+(เคยเจอ `/privacy` ตอบเป็นหน้าแรก และ `sitemap.xml` ยังเป็นฉบับก่อน) ถ้าอยากเช็คทันทีให้ยิงที่
+URL ของ deployment (`https://<id>.rubriclensai.pages.dev`) ซึ่งไม่ติด cache ของโดเมนหลัก
+
 เปิด https://rubriclensai.pages.dev/ แล้วตรวจด้วยมือ:
 
 1. หน้าโหลดได้ และหัวข้อ “RubricLensAi” แสดงผล

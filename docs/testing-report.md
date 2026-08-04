@@ -89,7 +89,36 @@ npm run verify
 
 ## Production verification
 
-**สถานะ: deploy และตรวจ production ผ่านแล้วเมื่อ 2 สิงหาคม 2026**
+**สถานะ: deploy หน้ากฎหมายและตรวจ production ผ่านแล้วเมื่อ 4 สิงหาคม 2026**
+
+### รอบล่าสุด — 4 สิงหาคม 2026 (Pages เท่านั้น ไม่ได้แตะ Worker)
+
+- Pages deployment: `b376c803` (`https://b376c803.rubriclensai.pages.dev`) branch `main`
+- Worker: **ไม่ได้ deploy ใหม่** เพราะงานรอบนี้ไม่แตะ `worker/` เลย
+- Worker health ตรวจแล้วยังปกติ: `apiVersion 1`, `supportedApiVersions [0,1]`, `aiConfigured true`,
+  `rateLimitConfigured true`, model `gemini-3.6-flash` / fallback `gemini-3.5-flash-lite`
+
+ตรวจบนเบราว์เซอร์จริงกับ `https://rubriclensai.pages.dev` ผ่านทั้ง 6 ข้อ:
+
+| ตรวจอะไร | ผล |
+| --- | --- |
+| หน้าแรกโหลดได้ และท้ายเว็บแสดง “© 2026 RubricLensAi” | ผ่าน |
+| ลิงก์ท้ายเว็บชี้ไป `/privacy` และ `/terms` ถูกต้อง | ผ่าน |
+| `/privacy` แสดงหัวข้อคุกกี้ ชื่อคีย์ที่เก็บจริงทั้งสองตัว อีเมลติดต่อ และอายุ 10 นาที | ผ่าน |
+| `/terms` แสดงหัวข้อ “ให้บริการตามสภาพ” และ “ข้อจำกัดความรับผิด” | ผ่าน |
+| `/cookies` (เส้นทางที่ไม่มีแล้ว) คืน **404 จริง** พร้อมหน้า 404 ของเราเอง | ผ่าน |
+| ไม่มี console error บนหน้านโยบาย | ผ่าน |
+
+`sitemap.xml` บน production คืนครบ 3 URL แล้ว
+
+**สิ่งที่รอบนี้ยังไม่ได้ตรวจ:** ไม่ได้สั่งวิเคราะห์จริงด้วย Gemini บน production
+เพราะงานรอบนี้ไม่แตะ Worker และไม่อยากใช้โควตารายวันโดยไม่จำเป็น
+เส้นทางส่งตรวจถูกครอบด้วย E2E บนบันเดิลชุดเดียวกับที่ deploy แล้ว (แบบ stub API)
+
+หลัง deploy เสร็จใหม่ ๆ edge cache ของ Cloudflare ยังคืนของเดิมอยู่ประมาณหนึ่งนาที
+(`/privacy` ตอบเป็นหน้าแรก และ `sitemap.xml` ยังมี URL เดียว) หลังจากนั้นตรงทั้งหมด
+
+### รอบก่อนหน้า — 2 สิงหาคม 2026
 
 - Live URL: [https://rubriclensai.pages.dev/](https://rubriclensai.pages.dev/)
 - Pages verified deployment: `14368c90-9372-4d64-bcd5-95f3715b40ed`
