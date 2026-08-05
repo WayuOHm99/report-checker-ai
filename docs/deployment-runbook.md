@@ -87,6 +87,8 @@ curl -s 'https://rubriclensai-api.oomzazato01.workers.dev/api/health?verify=ai'
 
 ต้องได้ `"aiReachable":true` และ `"aiCheckCode":"OK"` ถ้าได้ `"aiCheckCode":"AI_CONFIGURATION"` แปลว่า **key ถูกลบหรือถูกปิดไปแล้ว** ให้ตั้ง key ใหม่ด้วย `npx wrangler secret put GEMINI_API_KEY` ก่อนไปต่อ (ผลถูก cache 5 นาที ถ้าเพิ่งตั้ง key ใหม่ให้รอครบ 5 นาทีก่อนเชื่อผลนี้)
 
+> **กับดัก:** Cloudflare กระจาย Worker เวอร์ชันใหม่ไปทุก edge ไม่พร้อมกัน smoke test ที่ยิงทันทีหลัง `wrangler deploy` อาจโดนเวอร์ชัน**ก่อนหน้า**และดูเหมือนว่า deploy ไม่ขึ้น (เจอจริงเมื่อ 5 สิงหาคม 2026 — ยิง 3 ครั้งได้ผลไม่ตรงกัน) ให้ยิงซ้ำสัก 10 ครั้งจนได้ผลเหมือนกันทุกครั้งก่อนสรุปว่าพัง อย่ารีบ rollback
+
 ตรวจ CORS และ method guard เพิ่ม:
 
 ```bash
