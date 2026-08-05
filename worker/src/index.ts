@@ -803,8 +803,11 @@ async function watchGeminiReachable(env: AnalysisEnv) {
 }
 
 export default {
-  async scheduled(_controller: ScheduledController, env: Env | AnalysisEnv, ctx: ExecutionContext) {
-    ctx.waitUntil(watchGeminiReachable(env))
+  // Awaited rather than handed to waitUntil: a watch that fails silently is the
+  // exact problem this whole feature exists to solve, and awaiting lets the
+  // runtime record the run itself as failed.
+  async scheduled(_controller: ScheduledController, env: Env | AnalysisEnv, _ctx: ExecutionContext) {
+    await watchGeminiReachable(env)
   },
 
   async fetch(request: Request, env: Env | AnalysisEnv): Promise<Response> {

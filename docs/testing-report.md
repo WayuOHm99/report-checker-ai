@@ -6,7 +6,27 @@
 
 **สถานะ: ผ่าน automated quality gates ทั้งหมด**
 
-### รอบล่าสุด — 5 สิงหาคม 2026 (หลังกันภาษาปน และ health check ที่ตรวจ key จริง)
+### รอบล่าสุด — 5 สิงหาคม 2026 รอบสอง (ตัวเฝ้าอัตโนมัติ + ตัวนับคุณภาพภาษา)
+
+| Layer | Command | Result |
+| --- | --- | --- |
+| ทั้งชุด | `npm run verify` | **exit code 0** |
+| Static analysis | `npm run lint` | passed |
+| Unit/component | `npm run test` | 151/151 passed (เพิ่ม 10 เคสจากรอบก่อน) |
+| Worker bundle and bindings | `npm run worker:check` | passed — ไม่มี binding ใหม่ |
+| Production dependency audit | `npm run audit:prod` | **found 0 vulnerabilities** (เดิมค้าง moderate 1 รายการ) |
+| Production-preview E2E | `npm run test:e2e` | 88/88 passed |
+| CI บน GitHub | GitHub REST API | `40d618e` success, `a1f0f45` success |
+
+**พิสูจน์ว่าเทสต์ใหม่จับของจริง:** ปิดการเติม `qualityWarnings` และการนับ `foreign-script-retries`
+ชั่วคราวแล้วรันซ้ำ เคส “counts every foreign-script retry…” และ “tells the reader when foreign
+characters survived the retry…” **แดงทั้งคู่** (`expected undefined to be '1'`) คืนโค้ดแล้วเขียวทั้งคู่
+
+**อุบัติเหตุระหว่างทาง:** `npm audit fix --omit=dev` ตัด devDependencies ออกจาก `node_modules`
+ทำให้ `oxlint` หายและ `npm run verify` ล้มทันที แก้ด้วย `npm install` ซึ่งคืน devDependencies กลับมา
+โดย **`package-lock.json` ไม่เปลี่ยนเพิ่มแม้แต่ตัวอักษรเดียว** (ตรวจด้วย `diff` แล้ว)
+
+### รอบก่อนหน้า — 5 สิงหาคม 2026 รอบแรก (หลังกันภาษาปน และ health check ที่ตรวจ key จริง)
 
 รันบน Node.js 24 หลังเพิ่มด่านตรวจอักษร CJK ในผลของโมเดล และเพิ่มโหมด `/api/health?verify=ai`
 
@@ -111,9 +131,35 @@ npm run verify
 
 ## Production verification
 
-**สถานะ: deploy Worker และตรวจ production ผ่านแล้วเมื่อ 5 สิงหาคม 2026**
+**สถานะ: deploy Worker สองรอบและตรวจ production ผ่านแล้วเมื่อ 5 สิงหาคม 2026**
 
-### รอบล่าสุด — 5 สิงหาคม 2026 (Worker เท่านั้น ไม่ได้แตะ Pages)
+### รอบล่าสุด — 5 สิงหาคม 2026 รอบสอง (Worker เท่านั้น ไม่ได้แตะ Pages)
+
+- Worker version ใหม่: `98ec71af-16c9-40c4-b103-50e19a9c7d66`
+- Worker version ก่อนหน้า (ใช้ rollback): `3783fe7e-4dc4-4aaf-8ba4-4de419245106`
+- Cron trigger ลงทะเบียนแล้ว: wrangler รายงาน `schedule: 0 * * * *` หลัง deploy
+
+| ตรวจอะไร | ผล |
+| --- | --- |
+| `?verify=ai` คืนฟิลด์ใหม่ครบ | ผ่าน — `aiCheckAgeSeconds`, `foreignScriptRetriesToday`, `foreignScriptPersistedToday` |
+| cache ของ verify ทำงานจริง | ผ่าน — เรียกติดกัน 3 ครั้งได้ `aiCheckAgeSeconds` เท่ากันทั้งสามครั้ง (ไม่ได้ยิงถาม Google ซ้ำ) |
+| ตรวจเอกสารจริง 7 ฉบับ (สั้น 5 / ยาว 2) | ผ่านทั้งหมด HTTP 200, 5.7–9.5 วินาที |
+| ตัวนับคุณภาพภาษาหลังตรวจ 7 ฉบับ | `foreignScriptRetriesToday: 0`, `foreignScriptPersistedToday: 0` |
+| เอกสารที่เนื้อหาเกี่ยวกับวรรณกรรมญี่ปุ่นโดยตรง | ผ่าน — ตรวจได้ปกติ ไม่ถูกด่านภาษาปฏิเสธ |
+
+**เรื่องภาษาปน:** ตรวจ 7 ฉบับหลัง deploy ไม่มีฉบับใดปนอักษร CJK เลย (ก่อนแก้ ฉบับแรกที่ยิงทดสอบมี `評価`
+ปนใน `referenceComment`) **7 ฉบับยังไม่ใช่หลักฐานทางสถิติ** แต่ตอนนี้ตัวนับเดินอยู่ตลอด
+อ่านตัวเลขข้ามวันได้จาก `?verify=ai` ซึ่งเป็นสิ่งที่รอบก่อนทำไม่ได้เลย
+
+**ข้อค้นพบใหม่ที่สำคัญ — เส้นทางแบ่งท่อนเรียกไม่ถึงผ่าน API สาธารณะ:**
+ยิงเอกสารภาษาไทย 146,997 และ 198,000 ตัวอักษร (เกือบชนเพดาน `MAX_CHARS` 200,000) ได้
+`analyzedChunkCount: 1` ทั้งสองครั้ง แปลว่า token ยังไม่ถึง `SINGLE_CALL_TOKEN_LIMIT` (110,000)
+Gemini นับ token ภาษาไทยประหยัดกว่าที่ประมาณไว้ **ด่านสองขั้น (chunk pass + consolidation pass)
+จึงแทบเป็นโค้ดที่เรียกไม่ถึงในทางปฏิบัติ** ยังถูกครอบด้วย unit test อยู่ แต่ไม่เคยทำงานจริงกับผู้ใช้
+ยังไม่ได้แก้ เพราะการขยับ `MAX_CHARS` หรือ `SINGLE_CALL_TOKEN_LIMIT` เปลี่ยนพฤติกรรมและค่าใช้จ่าย
+ของระบบ ต้องให้เจ้าของโปรเจกต์ตัดสินก่อน
+
+### รอบก่อนหน้า — 5 สิงหาคม 2026 รอบแรก (Worker เท่านั้น ไม่ได้แตะ Pages)
 
 - Worker version ใหม่: `3783fe7e-4dc4-4aaf-8ba4-4de419245106`
 - Worker version ก่อนหน้า (ใช้ rollback): `00cd9d4d-cd9d-4357-8a6b-dd93380b4917`

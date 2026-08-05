@@ -796,11 +796,9 @@ describe('the hourly watch on the Gemini key', () => {
     globalThis.fetch = originalFetch
   })
 
-  /** Runs the scheduled handler and waits for the work it handed to waitUntil. */
+  /** Runs the cron handler exactly as the runtime does, and waits for it to finish. */
   async function runScheduledWatch(env: AnalysisEnv) {
-    const pending: Promise<unknown>[] = []
-    await worker.scheduled({} as ScheduledController, env, { waitUntil: (work: Promise<unknown>) => pending.push(work) } as unknown as ExecutionContext)
-    await Promise.all(pending)
+    await worker.scheduled({} as ScheduledController, env, {} as ExecutionContext)
   }
 
   it('pushes an alert to the configured webhook when Google stops accepting the key', async () => {
