@@ -56,6 +56,14 @@ npm run worker:check
 - `ALLOWED_ORIGIN` ตรงกับ Pages domain ที่ใช้จริง
 - KV namespace id ใน `wrangler.jsonc` ตรงกับ namespace ที่ตั้งใจใช้
 
+**Secret เสริม (ไม่ตั้งก็ deploy ได้):**
+
+```bash
+npx wrangler secret put ALERT_WEBHOOK_URL
+```
+
+คือปลายทางที่ตัวเฝ้ารายชั่วโมงจะส่งข้อความไปเมื่อ Gemini เรียกไม่ได้ ใส่ URL ของ Discord หรือ Slack incoming webhook ได้เลย ระบบส่ง `{"content": "...", "code": "..."}` ซึ่งทั้งสองเจ้าอ่านได้ **ถ้าไม่ตั้ง ตัวเฝ้ายังทำงานและยังบันทึกลง Workers Logs เหมือนเดิม แค่ไม่มีข้อความเด้งเข้ามือถือ**
+
 ### 2. Worker deploy
 
 ```bash
@@ -85,7 +93,14 @@ curl -s https://rubriclensai-api.oomzazato01.workers.dev/api/health
 curl -s 'https://rubriclensai-api.oomzazato01.workers.dev/api/health?verify=ai'
 ```
 
-ต้องได้ `"aiReachable":true` และ `"aiCheckCode":"OK"` ถ้าได้ `"aiCheckCode":"AI_CONFIGURATION"` แปลว่า **key ถูกลบหรือถูกปิดไปแล้ว** ให้ตั้ง key ใหม่ด้วย `npx wrangler secret put GEMINI_API_KEY` ก่อนไปต่อ (ผลถูก cache 5 นาที ถ้าเพิ่งตั้ง key ใหม่ให้รอครบ 5 นาทีก่อนเชื่อผลนี้)
+ต้องได้ `"aiReachable":true` และ `"aiCheckCode":"OK"` ถ้าได้ `"aiCheckCode":"AI_CONFIGURATION"` แปลว่า **key ถูกลบหรือถูกปิดไปแล้ว** ให้ตั้ง key ใหม่ด้วย `npx wrangler secret put GEMINI_API_KEY` ก่อนไปต่อ
+
+ผลถูก cache 5 นาที ให้ดู `"aiCheckAgeSeconds"` ประกอบเสมอ — ถ้าค่านี้มากกว่าจำนวนวินาทีที่ผ่านไปตั้งแต่คุณเปลี่ยน key แปลว่ากำลังอ่านคำตัดสินที่ตัดสินไว้ก่อนเปลี่ยน ให้รอแล้วเรียกใหม่
+
+โหมดนี้ยังคืนตัวนับคุณภาพภาษาของวันนี้มาด้วย ใช้ดูแนวโน้มข้ามวัน:
+
+- `"foreignScriptRetriesToday"` — จำนวนครั้งที่โมเดลปนตัวอักษรจีน/ญี่ปุ่น/เกาหลี จนระบบต้องขอใหม่
+- `"foreignScriptPersistedToday"` — ในจำนวนนั้น มีกี่ครั้งที่ขอใหม่แล้วยังไม่หาย
 
 > **กับดัก:** Cloudflare กระจาย Worker เวอร์ชันใหม่ไปทุก edge ไม่พร้อมกัน smoke test ที่ยิงทันทีหลัง `wrangler deploy` อาจโดนเวอร์ชัน**ก่อนหน้า**และดูเหมือนว่า deploy ไม่ขึ้น (เจอจริงเมื่อ 5 สิงหาคม 2026 — ยิง 3 ครั้งได้ผลไม่ตรงกัน) ให้ยิงซ้ำสัก 10 ครั้งจนได้ผลเหมือนกันทุกครั้งก่อนสรุปว่าพัง อย่ารีบ rollback
 

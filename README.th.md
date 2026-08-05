@@ -172,6 +172,14 @@ Worker dry-run → Worker deploy → health/contract smoke → Pages deploy → 
 dashboard เคยทำให้โปรเจกต์นี้พังมาแล้ว** บันทึกไว้ใน [LESSONS.md](LESSONS.md)
 ขั้นตอนเต็มและวิธี rollback อยู่ที่ [docs/deployment-runbook.md](docs/deployment-runbook.md)
 
+ระบบมีตัวเฝ้าอัตโนมัติ (cron ทุกชั่วโมง) คอยถาม Google ว่า key ยังใช้ได้ไหม เพราะ key ที่ถูกลบแล้ว
+หน้าตาเหมือน key ที่ใช้ได้ทุกประการจนกว่าจะมีคนส่งเอกสารเข้ามาตรวจ ตัวเฝ้าบันทึกลง Workers Logs เสมอ
+และถ้าตั้ง secret `ALERT_WEBHOOK_URL` ไว้ก็จะส่งข้อความไปที่ URL นั้นด้วย ถ้าอยากถามเองทันที:
+
+```bash
+curl -s 'https://rubriclensai-api.oomzazato01.workers.dev/api/health?verify=ai'
+```
+
 ## แผนผังโฟลเดอร์
 
 ```text

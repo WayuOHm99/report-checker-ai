@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdkMocks = vi.hoisted(() => ({
   countTokens: vi.fn(),
@@ -281,6 +281,43 @@ describe('POST /api/analyze', () => {
     expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
     expect(result.overallScore).toBe(67)
     expect(result.sections[0].reason).toContain('評価')
+  })
+
+  it('counts every foreign-script retry so the rate can be measured over time', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent
+      .mockResolvedValueOnce({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'ผู้ตรวจ評価ควรดูเพิ่ม', evidence: ['บทนำ'] }]) })
+      .mockResolvedValueOnce({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'ผู้ตรวจควรดูเพิ่ม', evidence: ['บทนำ'] }]) })
+    const rateLimit = new MemoryKv()
+
+    await worker.fetch(analyzeRequest(body, 'foreign-script-count-key-1'), geminiEnv({ RATE_LIMIT: rateLimit }))
+
+    const today = new Date().toISOString().slice(0, 10)
+    expect(rateLimit.values.get(`stats:foreign-script-retries:${today}`)).toBe('1')
+    expect(rateLimit.values.get(`stats:foreign-script-persisted:${today}`)).toBeUndefined()
+  })
+
+  it('tells the reader when foreign characters survived the retry instead of leaving it unexplained', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent.mockResolvedValue({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'ผู้ตรวจ評価ควรดูเพิ่ม', evidence: ['บทนำ'] }]) })
+    const rateLimit = new MemoryKv()
+
+    const response = await worker.fetch(analyzeRequest(body, 'foreign-script-warning-key-1'), geminiEnv({ RATE_LIMIT: rateLimit }))
+
+    const result = await response.json() as { qualityWarnings: string[] }
+    expect(response.status).toBe(200)
+    expect(result.qualityWarnings[0]).toContain('ตัวอักษรภาษาอื่นปนอยู่')
+    expect(rateLimit.values.get(`stats:foreign-script-persisted:${new Date().toISOString().slice(0, 10)}`)).toBe('1')
+  })
+
+  it('adds no language warning to a review that came back clean', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent.mockResolvedValue({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'พบเนื้อหาครบถ้วน', evidence: ['บทนำ'] }]) })
+
+    const response = await worker.fetch(analyzeRequest(body, 'foreign-script-clean-key-1'), geminiEnv())
+
+    expect((await response.json() as { qualityWarnings: string[] }).qualityWarnings).toEqual([])
+    expect(sdkMocks.generateContent).toHaveBeenCalledTimes(1)
   })
 
   it('accepts an excerpt quoted from a document that is written in another script', async () => {
@@ -688,6 +725,33 @@ describe('GET /api/health with an AI verification', () => {
     expect(sdkMocks.clientOptions[0]).toMatchObject({ httpOptions: { timeout: 5000 } })
   })
 
+  it('says how old the answer is, so a freshly replaced key is not judged on a stale verdict', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 3 })
+    const rateLimit = new MemoryKv()
+    const twoMinutesAgo = Math.floor(Date.now() / 1000) - 120
+    await rateLimit.put('health:ai-reachable', JSON.stringify({ reachable: false, code: 'AI_CONFIGURATION', checkedAt: twoMinutesAgo }))
+
+    const response = await worker.fetch(new Request('https://local.test/api/health?verify=ai'), geminiEnv({ RATE_LIMIT: rateLimit }))
+
+    const result = await response.json() as { aiCheckAgeSeconds: number; aiCheckCode: string }
+    expect(response.status).toBe(503)
+    expect(result.aiCheckCode).toBe('AI_CONFIGURATION')
+    expect(result.aiCheckAgeSeconds).toBeGreaterThanOrEqual(120)
+    expect(sdkMocks.countTokens).not.toHaveBeenCalled()
+  })
+
+  it('reports how many reviews needed a language retry today', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 3 })
+    const rateLimit = new MemoryKv()
+    const today = new Date().toISOString().slice(0, 10)
+    await rateLimit.put(`stats:foreign-script-retries:${today}`, '4')
+    await rateLimit.put(`stats:foreign-script-persisted:${today}`, '1')
+
+    const response = await worker.fetch(new Request('https://local.test/api/health?verify=ai'), geminiEnv({ RATE_LIMIT: rateLimit }))
+
+    expect(await response.json()).toMatchObject({ foreignScriptRetriesToday: 4, foreignScriptPersistedToday: 1 })
+  })
+
   it('reports a rejected key as degraded instead of reporting the service healthy', async () => {
     sdkMocks.countTokens.mockRejectedValue(new Error('403 API key not valid. Please pass a valid API key.'))
 
@@ -716,5 +780,75 @@ describe('GET /api/health with an AI verification', () => {
     expect(response.status).toBe(503)
     expect(sdkMocks.countTokens).not.toHaveBeenCalled()
     expect(await response.json()).toMatchObject({ status: 'degraded', aiReachable: false, aiCheckCode: 'MOCK_ANALYSIS' })
+  })
+})
+
+describe('the hourly watch on the Gemini key', () => {
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    sdkMocks.countTokens.mockReset()
+    sdkMocks.generateContent.mockReset()
+    sdkMocks.clientOptions.length = 0
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  /** Runs the scheduled handler and waits for the work it handed to waitUntil. */
+  async function runScheduledWatch(env: AnalysisEnv) {
+    const pending: Promise<unknown>[] = []
+    await worker.scheduled({} as ScheduledController, env, { waitUntil: (work: Promise<unknown>) => pending.push(work) } as unknown as ExecutionContext)
+    await Promise.all(pending)
+  }
+
+  it('pushes an alert to the configured webhook when Google stops accepting the key', async () => {
+    sdkMocks.countTokens.mockRejectedValue(new Error('403 API key not valid. Please pass a valid API key.'))
+    const alerts = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    globalThis.fetch = alerts as unknown as typeof fetch
+
+    await runScheduledWatch(geminiEnv({ ALERT_WEBHOOK_URL: 'https://hooks.example.test/alert' }))
+
+    expect(alerts).toHaveBeenCalledTimes(1)
+    expect(alerts.mock.calls[0][0]).toBe('https://hooks.example.test/alert')
+    expect(JSON.parse(alerts.mock.calls[0][1].body as string)).toMatchObject({ code: 'AI_CONFIGURATION' })
+  })
+
+  it('stays silent while the key still works, so an alert always means something', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 3 })
+    const alerts = vi.fn()
+    globalThis.fetch = alerts as unknown as typeof fetch
+
+    await runScheduledWatch(geminiEnv({ ALERT_WEBHOOK_URL: 'https://hooks.example.test/alert' }))
+
+    expect(alerts).not.toHaveBeenCalled()
+  })
+
+  it('still detects and records a dead key when no webhook is configured', async () => {
+    sdkMocks.countTokens.mockRejectedValue(new Error('403 API key not valid.'))
+    const rateLimit = new MemoryKv()
+
+    await runScheduledWatch(geminiEnv({ RATE_LIMIT: rateLimit }))
+
+    expect(JSON.parse(rateLimit.values.get('health:ai-reachable') as string)).toMatchObject({ reachable: false, code: 'AI_CONFIGURATION' })
+  })
+
+  it('asks Google again rather than trusting a cached verdict that predates the outage', async () => {
+    const rateLimit = new MemoryKv()
+    await rateLimit.put('health:ai-reachable', JSON.stringify({ reachable: true, code: 'OK', checkedAt: Math.floor(Date.now() / 1000) }))
+    sdkMocks.countTokens.mockRejectedValue(new Error('403 API key not valid.'))
+
+    await runScheduledWatch(geminiEnv({ RATE_LIMIT: rateLimit }))
+
+    expect(sdkMocks.countTokens).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(rateLimit.values.get('health:ai-reachable') as string)).toMatchObject({ reachable: false })
+  })
+
+  it('does not let a broken alert channel bring down the scheduled run', async () => {
+    sdkMocks.countTokens.mockRejectedValue(new Error('403 API key not valid.'))
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('webhook unreachable')) as unknown as typeof fetch
+
+    await expect(runScheduledWatch(geminiEnv({ ALERT_WEBHOOK_URL: 'https://hooks.example.test/alert' }))).resolves.toBeUndefined()
   })
 })

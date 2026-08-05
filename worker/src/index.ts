@@ -29,12 +29,17 @@ const GEMINI_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504]
 const AI_CHECK_TIMEOUT_MS = 5_000
 const AI_CHECK_CACHE_SECONDS = 5 * 60
 const AI_CHECK_CACHE_KEY = 'health:ai-reachable'
+const ALERT_TIMEOUT_MS = 5_000
+const QUALITY_EVENT_TTL_SECONDS = 60 * 60 * 36
+/** How often the model wrote a foreign character, and how often the corrective retry failed to remove it. */
+const FOREIGN_SCRIPT_RETRIES = 'foreign-script-retries'
+const FOREIGN_SCRIPT_PERSISTED = 'foreign-script-persisted'
 
 type RateLimitStore = Pick<KVNamespace, 'get' | 'put'>
 
 export type AnalysisEnv = Partial<Pick<Env,
   'GEMINI_API_KEY' | 'GEMINI_MODEL' | 'GEMINI_FALLBACK_MODEL' | 'MAX_CHARS' | 'MOCK_ANALYSIS' | 'DAILY_BUDGET_LIMIT' |
-  'DAILY_TOKEN_BUDGET' | 'ALLOWED_ORIGIN'>> & { RATE_LIMIT?: RateLimitStore }
+  'DAILY_TOKEN_BUDGET' | 'ALLOWED_ORIGIN'>> & { RATE_LIMIT?: RateLimitStore; ALERT_WEBHOOK_URL?: string }
 
 const rubricSectionSchema = z.object({
   id: z.string().trim().min(1).max(100),
@@ -234,9 +239,38 @@ const idempotencyRecordSchema = z.object({
   response: z.string().min(1),
 }).strict()
 
-const aiReachabilitySchema = z.object({ reachable: z.boolean(), code: z.string().min(1).max(100) }).strict()
+const aiReachabilitySchema = z.object({
+  reachable: z.boolean(), code: z.string().min(1).max(100), checkedAt: z.number().int().nonnegative(),
+}).strict()
 
 type AiReachability = z.infer<typeof aiReachabilitySchema>
+
+/**
+ * Counts one occurrence of a named quality event for today. Sampled logs cannot
+ * answer "is this getting better or worse" for something that happens rarely,
+ * so the tally lives in KV where every occurrence is counted exactly once.
+ * Deliberately best effort: losing a data point must never fail a review.
+ */
+async function recordQualityEvent(store: RateLimitStore | undefined, name: string) {
+  if (!store) return
+  try {
+    const key = qualityEventKey(name)
+    const existing = Number(await store.get(key) ?? '0')
+    await store.put(key, String(Number.isFinite(existing) ? existing + 1 : 1), { expirationTtl: QUALITY_EVENT_TTL_SECONDS })
+  } catch (error) {
+    console.warn(JSON.stringify({ event: 'quality_event_not_recorded', name, reason: error instanceof Error ? error.name : 'unknown' }))
+  }
+}
+
+async function readQualityEvent(store: RateLimitStore | undefined, name: string) {
+  if (!store) return 0
+  const counted = Number(await store.get(qualityEventKey(name)) ?? '0')
+  return Number.isFinite(counted) ? counted : 0
+}
+
+function qualityEventKey(name: string) {
+  return `stats:${name}:${new Date().toISOString().slice(0, 10)}`
+}
 
 async function incrementCounter(store: RateLimitStore | undefined, key: string, limit: number, amount = 1, expirationTtl = 60 * 60) {
   if (!store) return false
@@ -392,7 +426,7 @@ type ModelCall = {
   promptTokens: number
 }
 
-async function generateValidated(ai: GoogleGenAI, model: string, call: ModelCall, activeSections: ActiveSection[], ledger: TokenLedger) {
+async function generateValidated(ai: GoogleGenAI, model: string, call: ModelCall, activeSections: ActiveSection[], ledger: TokenLedger, store: RateLimitStore | undefined) {
   const generate = async (modelCall: ModelCall) => {
     const maxOutputTokens = estimateOutputTokens(activeSections.length)
     await ledger.charge(modelCall.promptTokens + maxOutputTokens)
@@ -418,6 +452,10 @@ async function generateValidated(ai: GoogleGenAI, model: string, call: ModelCall
     // One retry covers both defects, but they are not equally serious: an
     // incomplete answer cannot be shown at all, while a foreign character is
     // only unpleasant to read.
+    if (first) {
+      console.warn(JSON.stringify({ event: 'foreign_script_retry', model }))
+      await recordQualityEvent(store, FOREIGN_SCRIPT_RETRIES)
+    }
     const correction = first ? THAI_SCRIPT_CORRECTION_INSTRUCTION : 'Return valid JSON with every rubric id exactly once.'
     const retryPrompt = `${call.prompt}\n\n${correction}`
     const retryPromptTokens = await countPromptTokens(ai, model, call.systemInstruction, retryPrompt)
@@ -470,6 +508,7 @@ async function prepareModelPlan(ai: GoogleGenAI, model: string, payload: Analysi
  */
 async function consolidateChunkFindings(
   ai: GoogleGenAI, model: string, responses: ModelResponse[], payload: AnalysisPayload, activeSections: ActiveSection[], ledger: TokenLedger,
+  store: RateLimitStore | undefined,
 ) {
   const findings = responses.map((response, index) => compactChunkFindings(index + 1, response.sections))
   const prompt = buildConsolidationContents({
@@ -481,7 +520,7 @@ async function consolidateChunkFindings(
   }
 
   try {
-    return await generateValidated(ai, model, { systemInstruction: CONSOLIDATION_SYSTEM_INSTRUCTION, prompt, promptTokens }, activeSections, ledger)
+    return await generateValidated(ai, model, { systemInstruction: CONSOLIDATION_SYSTEM_INSTRUCTION, prompt, promptTokens }, activeSections, ledger, store)
   } catch (error) {
     if (error instanceof ApiFailure && error.code === 'INVALID_AI_RESPONSE') {
       throw new ApiFailure('CONSOLIDATION_FAILED', 'ระบบรวมผลวิเคราะห์ทุกส่วนของเอกสารไม่สำเร็จ จึงยังไม่แสดงคะแนนเพื่อไม่ให้ผลคลาดเคลื่อน โปรดลองใหม่อีกครั้ง', 502, true)
@@ -490,12 +529,12 @@ async function consolidateChunkFindings(
   }
 }
 
-async function generateModelPlan(ai: GoogleGenAI, plan: ModelPlan, payload: AnalysisPayload, activeSections: ActiveSection[], ledger: TokenLedger) {
+async function generateModelPlan(ai: GoogleGenAI, plan: ModelPlan, payload: AnalysisPayload, activeSections: ActiveSection[], ledger: TokenLedger, store: RateLimitStore | undefined) {
   const responses: ModelResponse[] = []
-  for (const call of plan.chunks) responses.push(await generateValidated(ai, plan.model, call, activeSections, ledger))
+  for (const call of plan.chunks) responses.push(await generateValidated(ai, plan.model, call, activeSections, ledger, store))
   if (responses.length === 1) return responses[0]
 
-  const consolidated = await consolidateChunkFindings(ai, plan.model, responses, payload, activeSections, ledger)
+  const consolidated = await consolidateChunkFindings(ai, plan.model, responses, payload, activeSections, ledger, store)
   return {
     ...consolidated,
     qualityWarnings: uniqueLimited([
@@ -537,13 +576,13 @@ async function analyzeWithGemini(payload: AnalysisPayload, activeSections: Activ
 
   let response: ModelResponse
   try {
-    response = await generateModelPlan(ai, plan, payload, activeSections, ledger)
+    response = await generateModelPlan(ai, plan, payload, activeSections, ledger, env.RATE_LIMIT)
   } catch (error) {
     if (!fallbackModel || plan.model === fallbackModel || !canUseFallback(error)) throw plan.model === fallbackModel && canUseFallback(error) ? exhaustedGeminiFailure(error) : error
     fallbackReason = error
     try {
       const fallbackPlan = await prepareModelPlan(ai, fallbackModel, payload, activeSections)
-      response = await generateModelPlan(ai, fallbackPlan, payload, activeSections, ledger)
+      response = await generateModelPlan(ai, fallbackPlan, payload, activeSections, ledger, env.RATE_LIMIT)
       plan = fallbackPlan
     } catch (fallbackError) {
       throw canUseFallback(fallbackError) ? exhaustedGeminiFailure(fallbackError) : fallbackError
@@ -557,6 +596,19 @@ async function analyzeWithGemini(payload: AnalysisPayload, activeSections: Activ
       qualityWarnings: uniqueLimited([`ระบบใช้โมเดลสำรอง ${plan.model} เนื่องจากโมเดลหลักไม่พร้อมหรือโควตาเต็ม โปรดยืนยันประเด็นสำคัญกับต้นฉบับ`, ...response.qualityWarnings], 5),
     }
   }
+
+  // The corrective retry already ran and did not clear it. Saying so in the
+  // result is the difference between a known cosmetic flaw and a silent one:
+  // the reader can see why a stray character is there instead of doubting the
+  // whole review.
+  if (containsForeignScript(response)) {
+    console.warn(JSON.stringify({ event: 'foreign_script_persisted', model: plan.model }))
+    await recordQualityEvent(env.RATE_LIMIT, FOREIGN_SCRIPT_PERSISTED)
+    response = {
+      ...response,
+      qualityWarnings: uniqueLimited(['ข้อความบางส่วนมีตัวอักษรภาษาอื่นปนอยู่ ระบบขอให้ AI เขียนใหม่แล้วแต่ยังไม่หาย คะแนนและหลักฐานยังใช้ได้ตามปกติ', ...response.qualityWarnings], 5),
+    }
+  }
   return { response, model: plan.model, chunkCount: plan.chunks.length, tokensCharged: ledger.spent }
 }
 
@@ -564,28 +616,40 @@ async function analyzeWithGemini(payload: AnalysisPayload, activeSections: Activ
  * Answers the question the presence of a key cannot: does Google still accept
  * it? A key that has been deleted or disabled looks identical to a working one
  * from inside the Worker, so the only honest check is an authenticated call.
- * countTokens is used because it consumes no generation quota, and the verdict
- * is cached so this public endpoint cannot be used to spend the per-minute
- * allowance that real reviews depend on.
+ * countTokens is used because it consumes no generation quota.
+ */
+async function probeGeminiReachable(env: AnalysisEnv): Promise<AiReachability> {
+  if (env.MOCK_ANALYSIS === 'true') return { reachable: false, code: 'MOCK_ANALYSIS', checkedAt: nowInSeconds() }
+  if (!env.GEMINI_API_KEY) return { reachable: false, code: 'AI_CONFIGURATION', checkedAt: nowInSeconds() }
+
+  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY, httpOptions: { timeout: AI_CHECK_TIMEOUT_MS } })
+  try {
+    await ai.models.countTokens({ model: env.GEMINI_MODEL?.trim() || DEFAULT_PRIMARY_MODEL, contents: 'health check' })
+    return { reachable: true, code: 'OK', checkedAt: nowInSeconds() }
+  } catch (error) {
+    const verdict = { reachable: false, code: mapGeminiError(error).code, checkedAt: nowInSeconds() }
+    console.warn(JSON.stringify({ event: 'gemini_health_check_failed', code: verdict.code }))
+    return verdict
+  }
+}
+
+/**
+ * The cached front door to the probe. Caching matters because the endpoint is
+ * public: without it, repeated calls would spend the per-minute allowance that
+ * real reviews depend on. The verdict carries the moment it was taken so a
+ * reader who just replaced the key can tell a fresh answer from a stale one.
  */
 async function checkGeminiReachable(env: AnalysisEnv): Promise<AiReachability> {
-  if (env.MOCK_ANALYSIS === 'true') return { reachable: false, code: 'MOCK_ANALYSIS' }
-  if (!env.GEMINI_API_KEY) return { reachable: false, code: 'AI_CONFIGURATION' }
-
   const cached = aiReachabilitySchema.safeParse(safelyParseJson(await env.RATE_LIMIT?.get(AI_CHECK_CACHE_KEY) ?? ''))
   if (cached.success) return cached.data
 
-  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY, httpOptions: { timeout: AI_CHECK_TIMEOUT_MS } })
-  let verdict: AiReachability
-  try {
-    await ai.models.countTokens({ model: env.GEMINI_MODEL?.trim() || DEFAULT_PRIMARY_MODEL, contents: 'health check' })
-    verdict = { reachable: true, code: 'OK' }
-  } catch (error) {
-    verdict = { reachable: false, code: mapGeminiError(error).code }
-    console.warn(JSON.stringify({ event: 'gemini_health_check_failed', code: verdict.code }))
-  }
+  const verdict = await probeGeminiReachable(env)
   await env.RATE_LIMIT?.put(AI_CHECK_CACHE_KEY, JSON.stringify(verdict), { expirationTtl: AI_CHECK_CACHE_SECONDS })
   return verdict
+}
+
+function nowInSeconds() {
+  return Math.floor(Date.now() / 1000)
 }
 
 function serializeAnalysisResponse(
@@ -700,7 +764,49 @@ export async function handleAnalyze(request: Request, env: AnalysisEnv) {
   return new Response(serialized, { headers: securityHeaders })
 }
 
+/**
+ * The hourly watch. `?verify=ai` only tells you the key is dead once somebody
+ * thinks to look; this asks on its own and says so out loud. It probes past the
+ * cache, because a cached "reachable" from five minutes ago would defeat the
+ * whole point, then refreshes that cache so the next reader benefits.
+ *
+ * Silence on success is deliberate: an alert that fires every hour is an alert
+ * nobody reads.
+ */
+async function watchGeminiReachable(env: AnalysisEnv) {
+  const verdict = await probeGeminiReachable(env)
+  await env.RATE_LIMIT?.put(AI_CHECK_CACHE_KEY, JSON.stringify(verdict), { expirationTtl: AI_CHECK_CACHE_SECONDS })
+  if (verdict.reachable) {
+    console.log(JSON.stringify({ event: 'gemini_watch_ok' }))
+    return
+  }
+
+  console.error(JSON.stringify({ event: 'gemini_watch_failed', code: verdict.code }))
+  if (!env.ALERT_WEBHOOK_URL) return
+  try {
+    await fetch(env.ALERT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // `content` is what Discord and Slack-compatible webhooks read. The code
+      // is repeated as its own field for anything that parses the body.
+      body: JSON.stringify({
+        content: `RubricLensAi: Gemini เรียกไม่ได้ (${verdict.code}) ระบบตรวจเอกสารใช้งานไม่ได้ในขณะนี้`,
+        code: verdict.code,
+      }),
+      signal: AbortSignal.timeout(ALERT_TIMEOUT_MS),
+    })
+  } catch (error) {
+    // A failed alert must not retry the whole scheduled run; the log above is
+    // still recorded either way.
+    console.error(JSON.stringify({ event: 'gemini_watch_alert_failed', reason: error instanceof Error ? error.name : 'unknown' }))
+  }
+}
+
 export default {
+  async scheduled(_controller: ScheduledController, env: Env | AnalysisEnv, ctx: ExecutionContext) {
+    ctx.waitUntil(watchGeminiReachable(env))
+  },
+
   async fetch(request: Request, env: Env | AnalysisEnv): Promise<Response> {
     const url = new URL(request.url)
     let response: Response
@@ -723,7 +829,18 @@ export default {
         else {
           const ai = await checkGeminiReachable(env)
           const ready = configured && ai.reachable
-          response = json({ ...report, status: ready ? 'ok' : 'degraded', aiReachable: ai.reachable, aiCheckCode: ai.code }, ready ? 200 : 503)
+          response = json({
+            ...report,
+            status: ready ? 'ok' : 'degraded',
+            aiReachable: ai.reachable,
+            aiCheckCode: ai.code,
+            // A cached verdict can be up to five minutes old. Saying how old
+            // stops a reader who just replaced the key from trusting the
+            // answer that was taken before they did.
+            aiCheckAgeSeconds: Math.max(0, nowInSeconds() - ai.checkedAt),
+            foreignScriptRetriesToday: await readQualityEvent(env.RATE_LIMIT, FOREIGN_SCRIPT_RETRIES),
+            foreignScriptPersistedToday: await readQualityEvent(env.RATE_LIMIT, FOREIGN_SCRIPT_PERSISTED),
+          }, ready ? 200 : 503)
         }
       } else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
       else if (url.pathname === '/api/analyze') response = new Response(JSON.stringify({ error: 'endpoint นี้รองรับเฉพาะ POST', code: 'METHOD_NOT_ALLOWED', retryable: false }), { status: 405, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })

@@ -177,6 +177,15 @@ Worker dry-run → Worker deploy → health/contract smoke → Pages deploy → 
 has broken this project before — that incident is written up in [LESSONS.md](LESSONS.md). Full steps
 and rollback: [docs/deployment-runbook.md](docs/deployment-runbook.md).
 
+An hourly cron trigger asks Google whether the key still works, because a deleted key is
+indistinguishable from a working one until somebody submits a document. It writes to Workers Logs
+always, and pushes to the optional `ALERT_WEBHOOK_URL` secret when one is set. To ask the same
+question by hand:
+
+```bash
+curl -s 'https://rubriclensai-api.oomzazato01.workers.dev/api/health?verify=ai'
+```
+
 ## Repository map
 
 ```text

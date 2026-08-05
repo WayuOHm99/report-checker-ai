@@ -4,8 +4,20 @@
   "main": "worker/src/index.ts",
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
+  // ALERT_WEBHOOK_URL is an optional extra secret, set with
+  // `wrangler secret put ALERT_WEBHOOK_URL`. It is where the hourly watch
+  // pushes its alert when Gemini stops answering. The watch still writes to
+  // Workers Logs without it, so leaving it unset costs the push notification,
+  // not the detection. It stays out of "required" so a deploy never blocks on
+  // an alert channel nobody has chosen yet.
   "secrets": {
     "required": ["GEMINI_API_KEY"]
+  },
+  // Hourly check that the Gemini key still works. A dead key is invisible from
+  // inside the Worker until someone submits a document, so nothing less
+  // frequent would catch it before real users do.
+  "triggers": {
+    "crons": ["0 * * * *"]
   },
   "observability": {
     "enabled": true,
