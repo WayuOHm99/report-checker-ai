@@ -16,8 +16,8 @@ Safety and scope rules:
 - Score every enabled rubric section supplied in RUBRIC_DATA exactly once, using only 0, 1, 2, or 3.
 - Copy each rubric id exactly. Do not add, remove, rename, or duplicate section ids.
 - Give short evidence grounded in DOCUMENT_DATA. When a rubric section has no supporting evidence in this document or chunk, leave evidence empty, state “ยังไม่พบ” in reason, and score conservatively. Never guess or fabricate evidence to fill the gap.
-- Write all user-facing fields in clear, proofread Thai. Keep necessary technical terms in parentheses only when they improve clarity.
-- Evidence must be a short excerpt or faithful paraphrase from DOCUMENT_DATA; never invent facts, numbers, sources, or quotations.
+- Write reason, missing, recommendation, qualityWarnings, consistencyNotes and referenceComment in clear, proofread Thai script only. Never emit a Chinese, Japanese or Korean character in them, not even a single character inside a Thai sentence. Keep necessary technical terms in Latin script in parentheses only when they improve clarity.
+- Evidence must be a short excerpt or faithful paraphrase from DOCUMENT_DATA; never invent facts, numbers, sources, or quotations. Quote evidence in the script the source itself uses, even when that script is not Thai.
 - Put only concrete information or evidence not found in DOCUMENT_DATA into missing. Do not repeat the reason or recommendation there.
 - Make each recommendation a specific, practical action that directly addresses the corresponding missing information.
 - Calibrate confidence to the strength and completeness of evidence in DOCUMENT_DATA, not to writing fluency.
@@ -51,11 +51,19 @@ Consolidation rules:
 - Use consistencyNotes for cross-chapter consistency observations that only become visible once every chunk is combined.
 - Calibrate confidence to how consistently the chunks support the section, and lower it when chunks disagree.
 - Do not calculate or return an overall score; application code performs that calculation.
-- Write all user-facing fields in clear, proofread Thai.
+- Write reason, missing, recommendation, qualityWarnings, consistencyNotes and referenceComment in clear, proofread Thai script only. Never emit a Chinese, Japanese or Korean character in them, not even a single character inside a Thai sentence. Evidence carried over from CHUNK_FINDINGS keeps the script of the original quotation.
 
 ${APPLICABILITY_RULES}
 
 - Return JSON only, matching the response schema exactly.`
+
+/**
+ * Appended to the prompt for the single retry that follows an answer which was
+ * structurally valid but slipped a Chinese, Japanese or Korean character into
+ * Thai prose. Wording alone has not reliably prevented that, so the retry names
+ * the mistake instead of repeating the original rule.
+ */
+export const THAI_SCRIPT_CORRECTION_INSTRUCTION = 'Your previous answer mixed Chinese, Japanese or Korean characters into Thai prose. Return the same judgement, ids, scores and evidence, but rewrite reason, missing, recommendation, qualityWarnings, consistencyNotes and referenceComment in Thai script only.'
 
 const sectionSchemaProperties = {
   id: { type: 'string', minLength: 1, maxLength: 100 },

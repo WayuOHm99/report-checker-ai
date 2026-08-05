@@ -4,6 +4,7 @@ import { z } from 'zod'
 import {
   ANALYSIS_RESPONSE_JSON_SCHEMA, buildAnalysisContents, buildConsolidationContents, compactChunkFindings,
   CONSOLIDATION_SYSTEM_INSTRUCTION, prepareWorkerDocument, splitDocumentForAnalysis, SYSTEM_INSTRUCTION,
+  THAI_SCRIPT_CORRECTION_INSTRUCTION,
 } from './prompt'
 import {
   API_VERSION, API_VERSION_HEADER, DEFAULT_APPLICABILITY, isSupportedRequestApiVersion, LEGACY_API_VERSION,
@@ -25,6 +26,9 @@ const DEFAULT_DAILY_TOKEN_BUDGET = 2_000_000
 const DEFAULT_PRIMARY_MODEL = 'gemini-3.6-flash'
 const DEFAULT_FALLBACK_MODEL = 'gemini-3.5-flash-lite'
 const GEMINI_RETRYABLE_STATUS_CODES = [408, 429, 500, 502, 503, 504]
+const AI_CHECK_TIMEOUT_MS = 5_000
+const AI_CHECK_CACHE_SECONDS = 5 * 60
+const AI_CHECK_CACHE_KEY = 'health:ai-reachable'
 
 type RateLimitStore = Pick<KVNamespace, 'get' | 'put'>
 
@@ -230,6 +234,10 @@ const idempotencyRecordSchema = z.object({
   response: z.string().min(1),
 }).strict()
 
+const aiReachabilitySchema = z.object({ reachable: z.boolean(), code: z.string().min(1).max(100) }).strict()
+
+type AiReachability = z.infer<typeof aiReachabilitySchema>
+
 async function incrementCounter(store: RateLimitStore | undefined, key: string, limit: number, amount = 1, expirationTtl = 60 * 60) {
   if (!store) return false
   const existing = Number(await store.get(key) ?? '0')
@@ -317,6 +325,31 @@ function uniqueLimited(values: string[], limit: number) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, limit)
 }
 
+/**
+ * The scripts that occasionally leak into Thai model prose, as five character
+ * ranges: Hiragana and Katakana (U+3040-30FF), CJK ideographs and their
+ * extension A and compatibility blocks (U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF),
+ * and Hangul syllables (U+AC00-D7AF). Thai, Latin letters and digits are not
+ * matched, so a Thai review that names a technical term in English stays clean.
+ */
+const FOREIGN_SCRIPT_PATTERN = /[぀-ヿ㐀-䶿一-鿿豈-﫿가-힯]/
+
+/**
+ * Detects the model writing its own prose in a script the reader cannot read.
+ * Evidence is deliberately excluded: it quotes the submitted document word for
+ * word, so a document that is genuinely written in another script must survive
+ * unchanged instead of being treated as a defect.
+ */
+function containsForeignScript(response: ModelResponse) {
+  const modelAuthoredText = [
+    response.referenceComment,
+    ...response.qualityWarnings,
+    ...response.consistencyNotes,
+    ...response.sections.flatMap((section) => [section.reason, section.recommendation, ...section.missing]),
+  ]
+  return modelAuthoredText.some((text) => FOREIGN_SCRIPT_PATTERN.test(text))
+}
+
 function mapGeminiError(error: unknown) {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase()
   const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number' ? error.status : undefined
@@ -381,11 +414,18 @@ async function generateValidated(ai: GoogleGenAI, model: string, call: ModelCall
   }
   try {
     const first = validateExactSections(safelyParseJson(await generate(call)), activeSections)
-    if (first) return first
-    const retryPrompt = `${call.prompt}\n\nReturn valid JSON with every rubric id exactly once.`
+    if (first && !containsForeignScript(first)) return first
+    // One retry covers both defects, but they are not equally serious: an
+    // incomplete answer cannot be shown at all, while a foreign character is
+    // only unpleasant to read.
+    const correction = first ? THAI_SCRIPT_CORRECTION_INSTRUCTION : 'Return valid JSON with every rubric id exactly once.'
+    const retryPrompt = `${call.prompt}\n\n${correction}`
     const retryPromptTokens = await countPromptTokens(ai, model, call.systemInstruction, retryPrompt)
     const retry = validateExactSections(safelyParseJson(await generate({ ...call, prompt: retryPrompt, promptTokens: retryPromptTokens })), activeSections)
     if (retry) return retry
+    // Returning the complete first answer beats failing a review the user has
+    // already waited for, so a language slip alone never loses the whole result.
+    if (first) return first
     throw new ApiFailure('INVALID_AI_RESPONSE', 'คำตอบจาก AI ไม่ครบตามหัวข้อที่กำหนด โปรดลองใหม่อีกครั้ง', 502, true)
   } catch (error) {
     if (error instanceof ApiFailure) throw error
@@ -520,6 +560,34 @@ async function analyzeWithGemini(payload: AnalysisPayload, activeSections: Activ
   return { response, model: plan.model, chunkCount: plan.chunks.length, tokensCharged: ledger.spent }
 }
 
+/**
+ * Answers the question the presence of a key cannot: does Google still accept
+ * it? A key that has been deleted or disabled looks identical to a working one
+ * from inside the Worker, so the only honest check is an authenticated call.
+ * countTokens is used because it consumes no generation quota, and the verdict
+ * is cached so this public endpoint cannot be used to spend the per-minute
+ * allowance that real reviews depend on.
+ */
+async function checkGeminiReachable(env: AnalysisEnv): Promise<AiReachability> {
+  if (env.MOCK_ANALYSIS === 'true') return { reachable: false, code: 'MOCK_ANALYSIS' }
+  if (!env.GEMINI_API_KEY) return { reachable: false, code: 'AI_CONFIGURATION' }
+
+  const cached = aiReachabilitySchema.safeParse(safelyParseJson(await env.RATE_LIMIT?.get(AI_CHECK_CACHE_KEY) ?? ''))
+  if (cached.success) return cached.data
+
+  const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY, httpOptions: { timeout: AI_CHECK_TIMEOUT_MS } })
+  let verdict: AiReachability
+  try {
+    await ai.models.countTokens({ model: env.GEMINI_MODEL?.trim() || DEFAULT_PRIMARY_MODEL, contents: 'health check' })
+    verdict = { reachable: true, code: 'OK' }
+  } catch (error) {
+    verdict = { reachable: false, code: mapGeminiError(error).code }
+    console.warn(JSON.stringify({ event: 'gemini_health_check_failed', code: verdict.code }))
+  }
+  await env.RATE_LIMIT?.put(AI_CHECK_CACHE_KEY, JSON.stringify(verdict), { expirationTtl: AI_CHECK_CACHE_SECONDS })
+  return verdict
+}
+
 function serializeAnalysisResponse(
   apiVersion: RequestApiVersion,
   documentType: DocumentType,
@@ -639,15 +707,24 @@ export default {
     try {
       if (request.method === 'OPTIONS' && url.pathname === '/api/analyze') response = new Response(null, { status: 204, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else if (request.method === 'GET' && url.pathname === '/api/health') {
-        const ready = Boolean(env.GEMINI_API_KEY && env.RATE_LIMIT && env.MOCK_ANALYSIS !== 'true')
-        response = json({
+        const configured = Boolean(env.GEMINI_API_KEY && env.RATE_LIMIT && env.MOCK_ANALYSIS !== 'true')
+        const report = {
           apiVersion: API_VERSION,
           supportedApiVersions: [...SUPPORTED_REQUEST_API_VERSIONS],
           legacyDefaultVersion: LEGACY_API_VERSION,
-          status: ready ? 'ok' : 'degraded',
+          status: configured ? 'ok' : 'degraded',
           aiConfigured: Boolean(env.GEMINI_API_KEY), rateLimitConfigured: Boolean(env.RATE_LIMIT),
           model: env.GEMINI_MODEL ?? DEFAULT_PRIMARY_MODEL, fallbackModel: env.GEMINI_FALLBACK_MODEL ?? DEFAULT_FALLBACK_MODEL,
-        }, ready ? 200 : 503)
+        }
+        // The default check stays free and instant. `?verify=ai` is the opt-in
+        // that actually asks Google whether the configured key still works,
+        // because aiConfigured only ever proved that some value was present.
+        if (url.searchParams.get('verify') !== 'ai') response = json(report, configured ? 200 : 503)
+        else {
+          const ai = await checkGeminiReachable(env)
+          const ready = configured && ai.reachable
+          response = json({ ...report, status: ready ? 'ok' : 'degraded', aiReachable: ai.reachable, aiCheckCode: ai.code }, ready ? 200 : 503)
+        }
       } else if (request.method === 'POST' && url.pathname === '/api/analyze') response = await handleAnalyze(request, env)
       else if (url.pathname === '/api/analyze') response = new Response(JSON.stringify({ error: 'endpoint นี้รองรับเฉพาะ POST', code: 'METHOD_NOT_ALLOWED', retryable: false }), { status: 405, headers: { ...securityHeaders, allow: 'POST, OPTIONS' } })
       else response = errorResponse(new ApiFailure('NOT_FOUND', 'ไม่พบ endpoint ที่เรียกใช้', 404))

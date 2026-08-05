@@ -6,7 +6,29 @@
 
 **สถานะ: ผ่าน automated quality gates ทั้งหมด**
 
-### รอบล่าสุด — 4 สิงหาคม 2026 (หลังเพิ่มหน้ากฎหมายและท้ายเว็บ)
+### รอบล่าสุด — 5 สิงหาคม 2026 (หลังกันภาษาปน และ health check ที่ตรวจ key จริง)
+
+รันบน Node.js 24 หลังเพิ่มด่านตรวจอักษร CJK ในผลของโมเดล และเพิ่มโหมด `/api/health?verify=ai`
+
+| Layer | Command | Result |
+| --- | --- | --- |
+| Static analysis | `npm run lint` | passed |
+| Unit/component | `npm run test` | 141/141 passed (เพิ่ม 8 เคส: ภาษาปน 3, health verify 5) |
+| Worker bundle and bindings | `npm run worker:check` | passed — binding เท่าเดิม ไม่มี binding ใหม่ |
+| Production dependency audit | `npm run audit:prod` | passed (ไม่มี high/critical) — moderate ค้าง 1 รายการเดิม (`hono`) |
+| Production-preview E2E | `npm run test:e2e` | 88/88 passed (ไม่ได้เพิ่มเคสใหม่ — งานรอบนี้ไม่แตะ UI) |
+
+**พิสูจน์ว่าเทสต์ใหม่จับของจริง:** ปิดการทำงานของ `containsForeignScript()` ชั่วคราวแล้วรันซ้ำ
+เคส “asks the model again when it mixes Japanese characters into the Thai review” และ
+“still shows the review when the model keeps mixing Japanese characters after the retry”
+**แดงทั้งคู่** (`expected to be called 2 times, but got 1 times`) จากนั้นคืนโค้ดกลับแล้วเขียวทั้งคู่
+ทำแบบนี้เพราะเทสต์ที่เขียนหลังโค้ดอาจผ่านโดยไม่ได้ตรวจอะไรเลย
+
+**สิ่งที่เทสต์ชุดนี้ยังไม่ครอบ:** ไม่ได้ทดสอบว่า prompt ที่แก้ถ้อยคำใหม่ทำให้ Gemini
+ปนภาษาน้อยลงจริงหรือไม่ — วัดได้ก็ต่อเมื่อเก็บสถิติจากการใช้งานจริงเป็นชุด
+ด่านในโค้ดจึงเป็นชั้นที่พึ่งได้จริง ส่วน prompt เป็นชั้นเสริม
+
+### รอบก่อนหน้า — 4 สิงหาคม 2026 (หลังเพิ่มหน้ากฎหมายและท้ายเว็บ)
 
 รันบน Node.js 24 หลังเพิ่มหน้า `/privacy` (รวมหัวข้อคุกกี้), หน้า `/terms`,
 ท้ายเว็บแบบโปรดักต์ และเปลี่ยน build เป็น multi-page (สามหน้า)

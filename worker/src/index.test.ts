@@ -255,6 +255,46 @@ describe('POST /api/analyze', () => {
     expect(sdkMocks.clientOptions[0]).toMatchObject({ httpOptions: { retryOptions: { attempts: 3, httpStatusCodes: [408, 429, 500, 502, 503, 504] } } })
   })
 
+  it('asks the model again when it mixes Japanese characters into the Thai review', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent
+      .mockResolvedValueOnce({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'ผู้ตรวจ評価ควรดูเพิ่ม', evidence: ['บทนำ'] }]) })
+      .mockResolvedValueOnce({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'ผู้ตรวจควรดูเพิ่ม', evidence: ['บทนำ'] }]) })
+
+    const response = await worker.fetch(analyzeRequest(body, 'foreign-script-retry-key-1'), geminiEnv())
+
+    const result = await response.json() as { sections: Array<{ reason: string }> }
+    expect(response.status).toBe(200)
+    expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
+    expect(sdkMocks.generateContent.mock.calls[1][0].contents).toContain('Thai script only')
+    expect(result.sections[0].reason).toBe('ผู้ตรวจควรดูเพิ่ม')
+  })
+
+  it('still shows the review when the model keeps mixing Japanese characters after the retry', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent.mockResolvedValue({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'ผู้ตรวจ評価ควรดูเพิ่ม', evidence: ['บทนำ'] }]) })
+
+    const response = await worker.fetch(analyzeRequest(body, 'foreign-script-persistent-key-1'), geminiEnv())
+
+    const result = await response.json() as { overallScore: number; sections: Array<{ reason: string }> }
+    expect(response.status).toBe(200)
+    expect(sdkMocks.generateContent).toHaveBeenCalledTimes(2)
+    expect(result.overallScore).toBe(67)
+    expect(result.sections[0].reason).toContain('評価')
+  })
+
+  it('accepts an excerpt quoted from a document that is written in another script', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
+    sdkMocks.generateContent.mockResolvedValue({ text: modelResponse([{ id: 'introduction', score: 2, reason: 'บทนำยกข้อความต้นฉบับมาอ้างอิง', evidence: ['เอกสารต้นฉบับเขียนว่า 評価基準'] }]) })
+
+    const response = await worker.fetch(analyzeRequest(body, 'foreign-script-evidence-key-1'), geminiEnv())
+
+    const result = await response.json() as { sections: Array<{ evidence: string[] }> }
+    expect(response.status).toBe(200)
+    expect(sdkMocks.generateContent).toHaveBeenCalledTimes(1)
+    expect(result.sections[0].evidence).toEqual(['เอกสารต้นฉบับเขียนว่า 評価基準'])
+  })
+
   it('explains when the daily quota is exhausted on both models without offering an immediate retry', async () => {
     sdkMocks.countTokens.mockResolvedValue({ totalTokens: 200 })
     sdkMocks.generateContent.mockRejectedValue(new Error('429 RESOURCE_EXHAUSTED GenerateRequestsPerDayPerProjectPerModel-FreeTier'))
@@ -620,5 +660,61 @@ describe('not-applicable rubric sections', () => {
     expect(systemInstruction).toContain('not_applicable')
     expect(systemInstruction).toContain('forgot to write about it')
     expect(sdkMocks.generateContent.mock.calls[0][0].contents).toContain('notApplicableGuidance')
+  })
+})
+
+describe('GET /api/health with an AI verification', () => {
+  beforeEach(() => {
+    sdkMocks.countTokens.mockReset()
+    sdkMocks.generateContent.mockReset()
+    sdkMocks.clientOptions.length = 0
+  })
+
+  it('does not call Google at all for the plain health check', async () => {
+    const response = await worker.fetch(new Request('https://local.test/api/health'), geminiEnv())
+
+    expect(response.status).toBe(200)
+    expect(sdkMocks.countTokens).not.toHaveBeenCalled()
+    expect(await response.json()).not.toHaveProperty('aiReachable')
+  })
+
+  it('confirms the key still works when Google accepts it', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 3 })
+
+    const response = await worker.fetch(new Request('https://local.test/api/health?verify=ai'), geminiEnv())
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ status: 'ok', aiConfigured: true, aiReachable: true, aiCheckCode: 'OK' })
+    expect(sdkMocks.clientOptions[0]).toMatchObject({ httpOptions: { timeout: 5000 } })
+  })
+
+  it('reports a rejected key as degraded instead of reporting the service healthy', async () => {
+    sdkMocks.countTokens.mockRejectedValue(new Error('403 API key not valid. Please pass a valid API key.'))
+
+    const response = await worker.fetch(new Request('https://local.test/api/health?verify=ai'), geminiEnv())
+
+    expect(response.status).toBe(503)
+    expect(await response.json()).toMatchObject({
+      status: 'degraded', aiConfigured: true, aiReachable: false, aiCheckCode: 'AI_CONFIGURATION',
+    })
+  })
+
+  it('reuses the cached verdict instead of calling Google on every request', async () => {
+    sdkMocks.countTokens.mockResolvedValue({ totalTokens: 3 })
+    const env = geminiEnv()
+
+    await worker.fetch(new Request('https://local.test/api/health?verify=ai'), env)
+    const second = await worker.fetch(new Request('https://local.test/api/health?verify=ai'), env)
+
+    expect(second.status).toBe(200)
+    expect(sdkMocks.countTokens).toHaveBeenCalledTimes(1)
+  })
+
+  it('never calls Google while the Worker is running on mock analysis', async () => {
+    const response = await worker.fetch(new Request('https://local.test/api/health?verify=ai'), { MOCK_ANALYSIS: 'true', RATE_LIMIT: new MemoryKv() })
+
+    expect(response.status).toBe(503)
+    expect(sdkMocks.countTokens).not.toHaveBeenCalled()
+    expect(await response.json()).toMatchObject({ status: 'degraded', aiReachable: false, aiCheckCode: 'MOCK_ANALYSIS' })
   })
 })

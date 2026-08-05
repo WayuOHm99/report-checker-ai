@@ -109,6 +109,17 @@ User input
 
 ระบบ **ไม่** ใช้วิธีเลือกคะแนนสูงสุดจาก chunk อีกต่อไป หากขั้นสรุปรวมล้มเหลว ระบบคืน `CONSOLIDATION_FAILED` อย่างชัดเจนแทนที่จะเงียบ ๆ แสดงคะแนนที่รวมมาแบบไม่ถูกต้อง
 
+### Thai-only prose, faithful evidence
+
+โมเดลบางครั้งแทรกตัวอักษรจีน/ญี่ปุ่น/เกาหลีลงกลางประโยคภาษาไทย (เคยเจอจริง: `ผู้ตรวจ評価ควรตรวจสอบ`) ระบบกันสองชั้น
+
+1. `SYSTEM_INSTRUCTION` และ `CONSOLIDATION_SYSTEM_INSTRUCTION` ระบุชื่อฟิลด์ที่ต้องเป็นอักษรไทยล้วน และห้ามอักษร CJK ตรง ๆ
+2. `containsForeignScript()` ใน Worker ตรวจผลที่ได้จริง ถ้าเจอ → เรียกโมเดลซ้ำ **หนึ่งครั้ง** ด้วย `THAI_SCRIPT_CORRECTION_INSTRUCTION`
+
+การตรวจนี้ครอบเฉพาะข้อความที่โมเดลเขียนเอง (`reason`, `recommendation`, `missing`, `qualityWarnings`, `consistencyNotes`, `referenceComment`) **ไม่ครอบ `evidence`** เพราะ `evidence` คือการยกข้อความจากเอกสารต้นฉบับมาตรง ๆ เอกสารที่เขียนด้วยภาษาอื่นจริงจึงยังตรวจได้ตามปกติ
+
+ถ้าเรียกซ้ำแล้วยังปนอยู่ ระบบ **คืนผลให้ผู้ใช้** ไม่โยน error เพราะตัวอักษรหลุดหนึ่งตัวเป็นเรื่องความสวยงาม ไม่ใช่ความถูกต้องของคะแนน — การทิ้งผลที่ผู้ใช้รอมาแล้วเสียหายกว่า
+
 ### Idempotency by request digest
 
 - KV key เป็น SHA-256 ของ idempotency key ไม่ใช่ค่าดิบจาก client
@@ -132,6 +143,17 @@ Gemini 3 ใช้ `thinkingLevel: low` สำหรับงาน rubric ท�
 - response รุ่นก่อนที่ยังไม่มี `apiVersion` ถูก parse ด้วย schema แยกต่างหากสำหรับช่วง rolling deployment แล้ว upgrade อย่างชัดเจน (ทุกหัวข้อเป็น `applicable`) พร้อมเพิ่ม quality warning ให้ผู้ใช้เห็นว่าผลมาจากเซิร์ฟเวอร์รุ่นก่อน ไม่ใช่ซ่อนความต่างไว้
 - compatibility Worker ตรวจ client รุ่นเดิมจากการไม่มี version header แล้วคืน v0 shape แบบ exact; cache idempotency แยกตาม API version เพื่อไม่ให้ response ข้าม contract
 - frontend คำนวณคะแนนและ summary ซ้ำเพื่อยืนยันความสอดคล้องก่อนแสดงผล และปฏิเสธ N/A ที่ยังมีคะแนน หลักฐาน หรือรายการที่ขาด
+
+### Health check ที่แยก "ตั้งค่าไว้" ออกจาก "ใช้ได้จริง"
+
+`aiConfigured` บอกได้แค่ว่า **มีค่า** `GEMINI_API_KEY` อยู่ ไม่ได้บอกว่า Google ยังรับ key นั้น — key ที่ถูกลบไปแล้วหน้าตาเหมือน key ที่ใช้ได้ทุกประการเมื่อมองจากใน Worker (เกิดขึ้นจริงแล้ว ดู `LESSONS.md` บทที่ 6)
+
+| endpoint | ทำอะไร | ค่าใช้จ่าย |
+|----------|--------|-----------|
+| `GET /api/health` | ตอบทันทีจาก env ที่มีอยู่ ไม่ต่อออกนอก | ฟรี |
+| `GET /api/health?verify=ai` | เรียก `countTokens` จริงเพื่อถาม Google ว่า key ยังใช้ได้ไหม แล้วเพิ่ม `aiReachable` กับ `aiCheckCode` | ไม่กิน generation quota |
+
+โหมด verify มีเพดานเวลา 5 วินาที และ cache คำตอบไว้ใน KV 5 นาที เพื่อไม่ให้ endpoint สาธารณะถูกยิงถล่มจนกิน rate limit ที่การตรวจเอกสารจริงต้องใช้ ถ้า key ใช้ไม่ได้จะได้ `status: "degraded"` + HTTP 503 แทนที่จะรายงานว่าปกติ
 
 ### Explicit appendix consent
 

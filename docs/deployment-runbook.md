@@ -79,6 +79,14 @@ curl -s https://rubriclensai-api.oomzazato01.workers.dev/api/health
 
 ถ้า `apiVersion` หรือ `supportedApiVersions` ไม่ตรง **ให้หยุดและ rollback Worker** อย่าเพิ่ง deploy Pages
 
+`aiConfigured` บอกแค่ว่า **มีค่า key อยู่** ไม่ได้บอกว่า Google ยังรับ key นั้น ให้ตรวจของจริงเพิ่มอีกคำสั่ง:
+
+```bash
+curl -s 'https://rubriclensai-api.oomzazato01.workers.dev/api/health?verify=ai'
+```
+
+ต้องได้ `"aiReachable":true` และ `"aiCheckCode":"OK"` ถ้าได้ `"aiCheckCode":"AI_CONFIGURATION"` แปลว่า **key ถูกลบหรือถูกปิดไปแล้ว** ให้ตั้ง key ใหม่ด้วย `npx wrangler secret put GEMINI_API_KEY` ก่อนไปต่อ (ผลถูก cache 5 นาที ถ้าเพิ่งตั้ง key ใหม่ให้รอครบ 5 นาทีก่อนเชื่อผลนี้)
+
 ตรวจ CORS และ method guard เพิ่ม:
 
 ```bash
