@@ -1,0 +1,107 @@
+<!--
+  RubricLensAi — สีหน้าระบบไม่ตอบสนอง — ตาดับ ไม่ใช่หน้าเศร้า. ใช้กับระบบพังเท่านั้น
+
+  ⚠️ ไฟล์นี้ถูกสร้างโดย build-mascots.py — ห้ามแก้ตรงนี้ รันทีเดียวหายหมด
+     ต้องการแก้ ให้แก้ที่ build-mascots.py แล้วรันใหม่
+
+  แสงตกจากบนซ้ายเสมอ ทุกชิ้นส่วนสว่างบนซ้าย เข้มล่างขวา
+  งานออกแบบต้นฉบับ ไม่ได้ลอกจากหุ่นยนต์ยี่ห้อใด
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="30 14 224 230" width="224" height="230" fill="none" role="img" aria-label="ระบบไม่ตอบสนอง">
+  <title>ระบบไม่ตอบสนอง</title>
+  <defs>
+    <linearGradient id="shell" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="0.45" stop-color="#e6eef9"/>
+      <stop offset="1" stop-color="#c5d8ef"/>
+    </linearGradient>
+    <linearGradient id="shellBody" x1="0.15" y1="0" x2="0.85" y2="1">
+      <stop offset="0" stop-color="#f2f7fd"/>
+      <stop offset="0.5" stop-color="#dbe7f6"/>
+      <stop offset="1" stop-color="#b9cfe9"/>
+    </linearGradient>
+    <linearGradient id="shellArm" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#dbe7f6"/>
+      <stop offset="1" stop-color="#a3bfe0"/>
+    </linearGradient>
+    <radialGradient id="screen" cx="0.38" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#24507c"/>
+      <stop offset="0.55" stop-color="#153a5e"/>
+      <stop offset="1" stop-color="#0b2138"/>
+    </radialGradient>
+    <radialGradient id="screenOff" cx="0.38" cy="0.32" r="0.85">
+      <stop offset="0" stop-color="#2c4c68"/>
+      <stop offset="0.55" stop-color="#213b52"/>
+      <stop offset="1" stop-color="#16293a"/>
+    </radialGradient>
+    <linearGradient id="glare" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.42" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="0.7" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#8fdcd6"/>
+      <stop offset="0.6" stop-color="#5db5b5"/>
+      <stop offset="1" stop-color="#349090"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#407bb5"/>
+      <stop offset="0.5" stop-color="#286096"/>
+      <stop offset="1" stop-color="#153c62"/>
+    </linearGradient>
+    <linearGradient id="ringOff" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#8aa4bd"/>
+      <stop offset="1" stop-color="#5a7a99"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0.15" y1="0.1" x2="0.85" y2="0.9">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.55" stop-color="#f4f9ff"/>
+      <stop offset="1" stop-color="#dceaf9"/>
+    </linearGradient>
+    <radialGradient id="groundShadow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8fa3b8" stop-opacity="0.42"/>
+      <stop offset="0.6" stop-color="#8fa3b8" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#8fa3b8" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="clipScreen"><rect x="53" y="36" width="104" height="70" rx="24"/></clipPath>
+    <clipPath id="clipChest"><rect x="83" y="150" width="44" height="36" rx="9"/></clipPath>
+    <clipPath id="clipGlass"><circle cx="210" cy="66" r="25"/></clipPath>
+  </defs>
+  <ellipse cx="105" cy="226" rx="72" ry="15" fill="url(#groundShadow)"/>
+  <g stroke="url(#shellArm)" stroke-width="17" stroke-linecap="round">
+    <path d="M72 146 L48 166"/>
+    <path d="M138 146 L162 166"/>
+  </g>
+  <circle cx="47" cy="167" r="11.5" fill="url(#shellArm)"/>
+  <circle cx="163" cy="167" r="11.5" fill="url(#shellArm)"/>
+  <path d="M105 124 C81 124 69 141 66 176 C64 197 73 210 91 210 H119 C137 210 146 197 144 176 C141 141 129 124 105 124 Z" fill="url(#shellBody)"/>
+  <path d="M105 124 C88 124 77 132 71 148 C82 155 93 158 105 158 C117 158 128 155 139 148 C133 132 122 124 105 124 Z" fill="#a9c3e2" opacity="0.20"/>
+  <path d="M84 133 C76 142 72 156 70 173" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" opacity="0.45"/>
+  <rect x="97" y="110" width="16" height="16" rx="5" fill="#b9cfe9"/>
+  <rect x="39" y="22" width="132" height="98" rx="32" fill="url(#shell)"/>
+  <path d="M44 56 A 27 27 0 0 1 71 27" stroke="#ffffff" stroke-width="4.5" stroke-linecap="round" opacity="0.8"/>
+  <path d="M166 86 A 27 27 0 0 1 139 115" stroke="#9db8db" stroke-width="4.5" stroke-linecap="round" opacity="0.4"/>
+  <rect x="53" y="36" width="104" height="70" rx="24" fill="url(#screenOff)"/>
+  <g clip-path="url(#clipScreen)"><rect x="53" y="36" width="104" height="70" fill="url(#glare)"/></g>
+  <rect x="53" y="36" width="104" height="70" rx="24" stroke="#0a1d31" stroke-width="2" opacity="0.55"/>
+  <g stroke="#7d94a8" stroke-width="7" stroke-linecap="round">
+    <path d="M72 68 H90"/>
+    <path d="M120 68 H138"/>
+  </g>
+  <rect x="83" y="150" width="44" height="36" rx="9" fill="url(#screenOff)"/>
+  <g clip-path="url(#clipChest)"><rect x="83" y="150" width="44" height="36" fill="url(#glare)"/></g>
+  <rect x="83" y="150" width="44" height="36" rx="9" stroke="#0a1d31" stroke-width="1.6" opacity="0.5"/>
+  <g stroke-width="3.6" stroke-linecap="round">
+    <path d="M90 160 H120" stroke="#3a5a76"/>
+    <path d="M90 168 H110" stroke="#3a5a76"/>
+    <path d="M90 176 H116" stroke="#3a5a76"/>
+  </g>
+  <path d="M168 172 L182 186" stroke="#5a7a99" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="196" cy="204" r="20" fill="#f2f6fa"/>
+  <circle cx="196" cy="204" r="24" stroke="url(#ringOff)" stroke-width="9"/>
+  <g stroke="#8ba4b8" stroke-width="4.5" stroke-linecap="round">
+    <path d="M184 196 H210"/>
+    <path d="M184 204 H198"/>
+    <path d="M184 212 H206"/>
+  </g>
+</svg>

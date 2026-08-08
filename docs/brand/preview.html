@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RubricLensAi — ระบบออกแบบ (เฟส 1)</title>
+
+<!-- โหลดฟอนต์เดียวกับที่เว็บจริงใช้ ถ้าไม่มีเน็ตจะตกไปใช้ฟอนต์ระบบ หน้าตาจะเพี้ยนนิดหน่อย -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;700&display=swap" rel="stylesheet">
+
+<link rel="icon" href="./logo/favicon.svg">
+<link rel="stylesheet" href="./components.css">
+
+<style>
+  /* สไตล์เฉพาะหน้า preview นี้เท่านั้น ไม่ใช่ส่วนหนึ่งของระบบออกแบบ */
+  body { margin: 0; }
+  .page { max-width: 62rem; margin: 0 auto; padding: var(--rl-space-6) var(--rl-space-4) var(--rl-space-8); }
+  section { margin-top: var(--rl-space-7); }
+  h2 {
+    font-size: var(--rl-text-2xl); line-height: var(--rl-leading-tight);
+    margin: 0 0 var(--rl-space-2);
+    padding-bottom: var(--rl-space-2); border-bottom: 2px solid var(--rl-border);
+  }
+  .note { font-size: var(--rl-text-sm); color: var(--rl-text-muted); margin: 0 0 var(--rl-space-4); max-width: 46rem; }
+  .row { display: flex; flex-wrap: wrap; gap: var(--rl-space-3); align-items: center; }
+  .stack { display: grid; gap: var(--rl-space-3); }
+  .grid2 { display: grid; gap: var(--rl-space-4); grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+  .swatches { display: grid; gap: var(--rl-space-3); grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); }
+  .sw { border: 1px solid var(--rl-border); border-radius: var(--rl-radius-md); overflow: hidden; }
+  .sw__chip { height: 3.75rem; }
+  .sw__meta { padding: var(--rl-space-2); font-size: var(--rl-text-xs); line-height: 1.5; }
+  .sw__meta b { display: block; font-weight: var(--rl-weight-medium); }
+  .sw__meta span { color: var(--rl-text-muted); }
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between; gap: var(--rl-space-4);
+    padding: var(--rl-space-3) var(--rl-space-4);
+    background: var(--rl-bg-raised);
+    border-bottom: 1px solid var(--rl-border);
+  }
+  .topbar__inner { max-width: 62rem; margin: 0 auto; width: 100%; display: flex; align-items: center; justify-content: space-between; gap: var(--rl-space-4); }
+  .brandbox { color: var(--rl-primary); display: flex; align-items: center; }
+  .lockup { display: flex; align-items: center; gap: var(--rl-space-5); flex-wrap: wrap; }
+  .lockup__item { text-align: center; display: grid; gap: var(--rl-space-2); justify-items: center; }
+  .lockup__cap { font-size: var(--rl-text-xs); color: var(--rl-text-muted); }
+  .onbrand { background: var(--rl-primary); color: var(--rl-text-onbrand); padding: var(--rl-space-4); border-radius: var(--rl-radius-md); }
+  .typescale > * { margin: 0 0 var(--rl-space-3); }
+  table { width: 100%; border-collapse: collapse; font-size: var(--rl-text-sm); }
+  th, td { text-align: start; padding: var(--rl-space-2) var(--rl-space-3); border-bottom: 1px solid var(--rl-border); vertical-align: top; }
+  th { font-weight: var(--rl-weight-medium); color: var(--rl-text-muted); }
+  code { font-size: 0.9em; background: var(--rl-bg-subtle); padding: 0.1em 0.35em; border-radius: var(--rl-radius-sm); }
+</style>
+</head>
+
+<body class="rl">
+
+<!-- ═══════════════ แถบบน: โลโก้จริง + สวิตช์โหมดมืด ═══════════════ -->
+<div class="topbar">
+  <div class="topbar__inner">
+    <div class="brandbox">
+      <img src="./logo/mascot-lockup.svg" alt="RubricLensAi" height="46">
+    </div>
+    <button class="rl-btn rl-btn--ghost rl-btn--sm" id="themeToggle" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      <span id="themeLabel">โหมดมืด</span>
+    </button>
+  </div>
+</div>
+
+<main class="page">
+
+  <p class="note" style="font-size: var(--rl-text-base); color: var(--rl-text);">
+    หน้านี้คือ <b>หลักฐานตรวจงานเฟส 1</b> — ทุกอย่างที่เห็นคือของจริงที่ดึงจาก
+    <code>tokens.css</code> กับ <code>components.css</code> ไม่ใช่ภาพประกอบ
+    ถ้าอยากเปลี่ยนสีทั้งหน้า ให้แก้ค่าใน <code>tokens.css</code> แล้วรีเฟรชหน้านี้
+    <br><br>
+    <b>ยังไม่มีอะไรในนี้ถูกนำไปใช้กับเว็บจริง</b> — การนำไปใช้เป็นงานเฟส 2 ที่รออนุมัติ
+  </p>
+
+  <!-- ═══════════════ โลโก้ ═══════════════ -->
+  <section>
+    <h2>1. มาสคอต — ตัวละครเดียวทั้งแบรนด์</h2>
+    <p class="note">
+      <b>ประโยคเดียวที่โลโก้นี้พูด: "ผู้ช่วยที่ตรวจงานคุณตามเกณฑ์"</b><br>
+      <b>หุ่นยนต์</b> = ผู้ช่วย AI &nbsp;·&nbsp;
+      <b>แว่นขยาย</b> = Lens &nbsp;·&nbsp;
+      <b>เส้นยาวไม่เท่ากันในแว่น</b> = Rubric ที่ให้คะแนนเป็นระดับ ไม่ใช่ผ่าน/ไม่ผ่าน
+      <br><br>
+      หุ่น<b>ถือ</b>แว่น ไม่ใช่หุ่น<b>เป็น</b>แว่น — เพราะเกณฑ์เป็นของผู้ใช้ AI แค่หยิบมาใช้
+      และตาเป็นวงกลมทึบเรียบๆ ไม่มีปากไม่มีคิ้ว โดยตั้งใจ เพื่อไม่ให้หุ่น "มีอารมณ์" ซึ่งจะขัดกับความเป็นกลาง
+      <br><br>
+      <b>ตัวละครนี้ใช้ทุกที่ ตั้งแต่ไอคอน 16 พิกเซลจนถึงภาพแชร์ลิงก์</b> — ต่างกันแค่ระดับรายละเอียด
+      เหมือนคนเดียวกันถ่ายไกลกับถ่ายใกล้ ไม่มีโลโก้ชุดอื่นในแบรนด์นี้อีกแล้ว
+    </p>
+
+    <p class="note">
+      <b>"2.5D" คืออะไร:</b> เป็นภาพเวกเตอร์แบน แต่ใส่การไล่เฉดสีกับแสงเงาจนดูมีปริมาตรเหมือนวัตถุจริง
+      ได้ความรู้สึกพรีเมียมแบบ 3D โดยยังย่อขยายไม่แตก ไฟล์เล็ก และแก้สีที่เดียวจบ
+      <br>
+      <b>แสงตกจากบนซ้ายเสมอ</b> ทุกชิ้นส่วนสว่างด้านบนซ้าย เข้มด้านล่างขวา —
+      ถ้าเพิ่มชิ้นส่วนใหม่ต้องทำตามทิศนี้ ไม่งั้นภาพจะดูผิดธรรมชาติทันที
+    </p>
+
+    <div class="lockup" style="margin-bottom: var(--rl-space-5);">
+      <div class="lockup__item">
+        <img src="./logo/mascot-lockup.svg" alt="โลโก้เต็ม" height="72">
+        <span class="lockup__cap">mascot-lockup — หัวเว็บ เอกสาร</span>
+      </div>
+      <div class="lockup__item">
+        <img src="./logo/mascot.svg" alt="มาสคอตเต็มตัว" height="96">
+        <span class="lockup__cap">mascot — หน้าจอว่าง รูปโปรไฟล์</span>
+      </div>
+      <div class="lockup__item">
+        <img src="./logo/mascot-head.svg" alt="หัวมาสคอต" height="52">
+        <span class="lockup__cap">mascot-head — พื้นที่แคบ</span>
+      </div>
+      <div class="lockup__item">
+        <img src="./logo/favicon.svg" alt="favicon" height="48">
+        <span class="lockup__cap">favicon — แท็บเบราว์เซอร์</span>
+      </div>
+    </div>
+
+    <div class="grid2">
+      <div class="rl-card">
+        <p class="rl-card__desc" style="margin-bottom: var(--rl-space-3)">
+          ทดสอบย่อ — <b>เต็มตัวใช้ได้ถึง 48px</b> ต่ำกว่านั้นแว่นกับแผงหน้าอกจะเละ
+        </p>
+        <div class="row" style="align-items: flex-end;">
+          <img src="./logo/mascot.svg" alt="" height="96"><span class="lockup__cap">96</span>
+          <img src="./logo/mascot.svg" alt="" height="72"><span class="lockup__cap">72</span>
+          <img src="./logo/mascot.svg" alt="" height="48"><span class="lockup__cap">48</span>
+        </div>
+        <div class="row" style="align-items: flex-end; margin-top: var(--rl-space-4)">
+          <img src="./logo/mascot-head.svg" alt="" height="44"><span class="lockup__cap">44</span>
+          <img src="./logo/mascot-head.svg" alt="" height="28"><span class="lockup__cap">28</span>
+          <img src="./logo/mascot-head.svg" alt="" height="20"><span class="lockup__cap">20</span>
+          <span class="lockup__cap">← หัวลงได้ถึง 20px</span>
+        </div>
+        <div class="row" style="align-items: flex-end; margin-top: var(--rl-space-4)">
+          <img src="./logo/favicon.svg" alt="" height="32"><span class="lockup__cap">32</span>
+          <img src="./logo/favicon.svg" alt="" height="20"><span class="lockup__cap">20</span>
+          <img src="./logo/favicon.svg" alt="" height="16"><span class="lockup__cap">16</span>
+          <span class="lockup__cap">← ไอคอนลงได้ถึง 16px</span>
+        </div>
+      </div>
+      <div class="rl-card" style="padding: 0; overflow: hidden;">
+        <div class="onbrand" style="border-radius: 0; height: 100%; display: flex; align-items: center; gap: var(--rl-space-4); flex-wrap: wrap">
+          <img src="./logo/mascot.svg" alt="" height="96">
+          <span style="font-size: var(--rl-text-sm); opacity: .9">
+            บนพื้นสีแบรนด์ใช้ได้เลย ไม่ต้องมีเวอร์ชันแยก<br>
+            เพราะตัวหุ่นสว่างกว่าพื้นอยู่แล้ว
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="font-size: var(--rl-text-lg); margin: var(--rl-space-6) 0 var(--rl-space-2);">ชุดสีหน้า — ตัวเดียวกัน แต่ตอบสนองต่างกัน</h3>
+    <p class="note">
+      สังเกตว่า<b>ยังไม่มีปาก</b>แม้ในสีหน้ายิ้ม ยิ้มด้วยตาอย่างเดียว
+      ถ้าใส่ปากเมื่อไหร่ หุ่นจะกลายเป็นตัวการ์ตูนเต็มตัว ซึ่งข้ามเส้นความเป็นกลางไป
+    </p>
+
+    <div class="rl-card">
+      <div class="lockup" style="justify-content: space-around">
+        <div class="lockup__item">
+          <img src="./logo/mascot.svg" alt="มาสคอตสีหน้าปกติ" height="140">
+          <span class="lockup__cap"><b>ปกติ</b><br>หน้าจอว่าง · สอนใช้งาน</span>
+        </div>
+        <div class="lockup__item">
+          <img src="./logo/mascot-thinking.svg" alt="มาสคอตกำลังตรวจ" height="140">
+          <span class="lockup__cap"><b>กำลังตรวจ</b><br>ตาเล็กลง เพ่งมอง<br>แผงอกติด 1 ใน 3 เส้น</span>
+        </div>
+        <div class="lockup__item">
+          <img src="./logo/mascot-done.svg" alt="มาสคอตตรวจเสร็จ" height="140">
+          <span class="lockup__cap"><b>เสร็จแล้ว</b><br>ยิ้มด้วยตา<br>แผงอกติดครบ</span>
+        </div>
+        <div class="lockup__item">
+          <img src="./logo/mascot-offline.svg" alt="มาสคอตระบบไม่ตอบสนอง" height="140">
+          <span class="lockup__cap"><b>ระบบไม่ตอบสนอง</b><br>ตาดับ ไม่ใช่หน้าเศร้า<br>แว่นห้อยลง</span>
+        </div>
+      </div>
+    </div>
+
+    <p class="note" style="margin-top: var(--rl-space-4)">
+      <b>ทำไมสีหน้า "ระบบไม่ตอบสนอง" ใช้ตาดับ ไม่ใช่หน้าเศร้า:</b>
+      หน้าเศร้าสื่อว่า "ฉันผิดหวังในตัวคุณ" แต่ตาดับสื่อว่า "ฉันเองที่มีปัญหา" — ซึ่งเป็นความจริง
+    </p>
+
+    <div class="rl-alert rl-alert--warning" style="margin-top: var(--rl-space-4)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17v.01"/></svg>
+      <div>
+        <p class="rl-alert__title">กฎเหล็ก 2 ข้อเรื่องหุ่น</p>
+        <p class="rl-alert__body">
+          <b>1. ห้ามให้หุ่นปรากฏในหน้าผลคะแนน</b> — ตอนคนกำลังดูว่าตัวเองได้กี่คะแนน เขาไม่ต้องการตัวการ์ตูนมาแสดงความเห็น
+          <br>
+          <b>2. สีหน้า "ระบบไม่ตอบสนอง" ใช้กับระบบพังเท่านั้น</b> — ห้ามใช้ตอนผู้ใช้ได้คะแนนน้อย
+          หลักการเดียวกับที่สีแดงถูกสงวนไว้: งานยังขาด ไม่ใช่ระบบพัง
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ สี ═══════════════ -->
+  <section>
+    <h2>2. ระบบสี</h2>
+    <p class="note">
+      สีหลักคือ <b>น้ำเงินหินชนวน</b> — สีของปากกาหมึกน้ำเงินและหน้าปกวิทยานิพนธ์
+      เลือกเพราะเป็นกลางที่สุดในบรรดาสีที่ยังมีตัวตน ไม่เร้าอารมณ์และไม่ดูเป็นของเล่น
+    </p>
+    <div class="swatches" id="brandScale"></div>
+
+    <h3 style="font-size: var(--rl-text-lg); margin: var(--rl-space-6) 0 var(--rl-space-2);">สีบอกระดับคะแนน — จงใจไม่ใช้ไฟจราจร</h3>
+    <p class="note">
+      ระบบไฟจราจร (แดง-เหลือง-เขียว) มีปัญหา 2 ข้อ: คนตาบอดสีแยกไม่ออก
+      และ<b>สีแดงทำให้รู้สึกเหมือนถูกดุ</b> ทั้งที่ผู้ใช้แค่ยังเขียนไม่ครบ
+      <br>
+      เราจึงสงวนสีแดงไว้ใช้กับ<b>ความผิดพลาดของระบบเท่านั้น</b> (ไฟล์เสีย เน็ตหลุด)
+      เพื่อให้ผู้ใช้แยกออกทันทีว่า "งานเรายังขาด" กับ "ระบบพัง" ไม่ใช่เรื่องเดียวกัน
+    </p>
+    <div class="swatches" id="stateScale"></div>
+  </section>
+
+  <!-- ═══════════════ ตัวอักษร ═══════════════ -->
+  <section>
+    <h2>3. ตัวอักษร</h2>
+    <p class="note">
+      ภาษาไทยใช้ <b>Noto Sans Thai</b> เพราะรองรับสระซ้อนได้ครบ
+      ความสูงบรรทัดตั้งไว้ 1.7 ซึ่งเป็นค่าต่ำสุดที่สระบน-ล่างไม่ชนกันระหว่างบรรทัด
+      ตัวเลขทุกตัวเปิด <code>tabular-nums</code> เพื่อให้กว้างเท่ากันหมด ตารางคะแนนจะได้ไม่เต้น
+    </p>
+    <div class="rl-card typescale">
+      <p style="font-size: var(--rl-text-3xl); font-weight: 700; line-height: var(--rl-leading-tight)">ตรวจเอกสารให้ครบ ชัด และตรงเกณฑ์</p>
+      <p style="font-size: var(--rl-text-2xl); font-weight: 700; line-height: var(--rl-leading-tight)">หัวข้อส่วน — 28px</p>
+      <p style="font-size: var(--rl-text-xl); font-weight: 700; line-height: var(--rl-leading-tight)">หัวข้อการ์ด — 22px</p>
+      <p style="font-size: var(--rl-text-base)">เนื้อความหลัก 16px — ตัวเล็กกว่านี้ไม่ได้ เพราะสระไทยจะเริ่มอ่านยากบนหน้าจอมือถือ ข้อความอธิบายผลการตรวจทั้งหมดใช้ขนาดนี้</p>
+      <p style="font-size: var(--rl-text-sm); color: var(--rl-text-muted)">คำอธิบายประกอบ 14px — ใช้กับเหตุผลใต้คะแนนและคำแนะนำใต้ช่องกรอก</p>
+      <p class="rl-num" style="font-size: var(--rl-text-xs); color: var(--rl-text-faint)">ป้ายกำกับเล็ก 12px — 0123456789 ตัวเลขความกว้างเท่ากันทุกตัว</p>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ปุ่ม ═══════════════ -->
+  <section>
+    <h2>4. ปุ่ม</h2>
+    <p class="note">
+      กฎเหล็ก: <b>หนึ่งหน้าจอมีปุ่มหลักได้หนึ่งปุ่ม</b>
+      ถ้ามีสองปุ่มเด่นเท่ากัน ผู้ใช้จะลังเลว่าควรกดอันไหน
+      ทุกปุ่มสูงอย่างน้อย 44 พิกเซล ซึ่งเป็นขนาดที่นิ้วโป้งผู้ใหญ่กดไม่พลาด
+      ลองกดปุ่ม Tab บนคีย์บอร์ดดู จะเห็นวงแหวนบอกตำแหน่ง
+    </p>
+    <div class="stack">
+      <div class="row">
+        <button class="rl-btn rl-btn--primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          เริ่มตรวจเอกสาร
+        </button>
+        <button class="rl-btn rl-btn--secondary">ดูตัวอย่างก่อน</button>
+        <button class="rl-btn rl-btn--ghost">ยกเลิก</button>
+        <button class="rl-btn rl-btn--danger">ล้างข้อมูลทั้งหมด</button>
+        <button class="rl-btn rl-btn--primary" disabled>ยังกดไม่ได้</button>
+      </div>
+      <div class="row">
+        <button class="rl-btn rl-btn--primary rl-btn--sm">ขนาดเล็ก 36px</button>
+        <button class="rl-btn rl-btn--primary">ขนาดปกติ 44px</button>
+        <button class="rl-btn rl-btn--primary rl-btn--lg">ขนาดใหญ่ 52px</button>
+      </div>
+      <p class="note" style="margin: 0">
+        ปุ่มที่กดไม่ได้ต้อง<b>จางลงแต่ยังอยู่</b> ห้ามซ่อนหาย — ไม่งั้นผู้ใช้จะงงว่าปุ่มไปไหน
+      </p>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ช่องกรอก ═══════════════ -->
+  <section>
+    <h2>5. ช่องกรอกข้อมูล</h2>
+    <p class="note">คำอธิบายอยู่<b>ใต้ป้ายกำกับ ก่อนช่องกรอก</b> เพื่อบอกล่วงหน้าว่าต้องกรอกยังไง ดีกว่าปล่อยให้กรอกผิดแล้วค่อยขึ้นข้อความเตือน</p>
+    <div class="grid2">
+      <div class="rl-field">
+        <label class="rl-label" for="f1">ชื่อเอกสาร</label>
+        <span class="rl-hint" id="h1">ใช้ตั้งชื่อไฟล์ผลการตรวจที่ดาวน์โหลด</span>
+        <input class="rl-input" id="f1" aria-describedby="h1" placeholder="เช่น รายงานวิจัยบทที่ 3">
+      </div>
+      <div class="rl-field">
+        <label class="rl-label" for="f2">น้ำหนักคะแนน</label>
+        <span class="rl-hint" id="h2">กรอกเป็นตัวเลข 1–100</span>
+        <input class="rl-input rl-input--error" id="f2" aria-describedby="h2 e2" aria-invalid="true" value="สองร้อย">
+        <span class="rl-error-text" id="e2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="width:1em;height:1em;flex-shrink:0;margin-top:.3em"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16.5v.01"/></svg>
+          กรอกเป็นตัวเลขระหว่าง 1 ถึง 100 — ตอนนี้เป็นตัวหนังสือ
+        </span>
+      </div>
+    </div>
+    <p class="note" style="margin-top: var(--rl-space-3)">
+      สังเกตข้อความเตือน: บอกว่า<b>ต้องกรอกอะไร</b>และ<b>ตอนนี้ผิดตรงไหน</b>
+      ไม่ใช่แค่ "ข้อมูลไม่ถูกต้อง"
+    </p>
+  </section>
+
+  <!-- ═══════════════ ป้ายสถานะ ═══════════════ -->
+  <section>
+    <h2>6. ป้ายบอกระดับคะแนน</h2>
+    <p class="note">
+      <b>หัวใจของแบรนด์นี้อยู่ตรงนี้</b> — ทุกป้ายมีครบ 3 อย่างเสมอ: สี + ไอคอน + ข้อความ
+      คนตาบอดสีมี 1 ใน 12 ของผู้ชาย ถ้าเหลือแต่สี เขาจะอ่านไม่ออกเลย
+      <br>ลองพิสูจน์: กดปุ่มด้านล่างเพื่อดูว่าถ้าตัดสีออกหมด ยังอ่านรู้เรื่องไหม
+    </p>
+    <div class="stack">
+      <div class="row" id="badgeRow">
+        <span class="rl-badge rl-badge--met">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>
+          ครบตามเกณฑ์
+        </span>
+        <span class="rl-badge rl-badge--partial">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor"/></svg>
+          มีบางส่วน
+        </span>
+        <span class="rl-badge rl-badge--missing">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>
+          ยังไม่พบ
+        </span>
+        <span class="rl-badge rl-badge--unsure">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.2 2.4c-.5.2-.7.6-.7 1.1v.5M12 16.5v.01"/></svg>
+          ต้องให้คนตรวจ
+        </span>
+      </div>
+      <div>
+        <button class="rl-btn rl-btn--secondary rl-btn--sm" id="grayToggle" type="button">ทดสอบ: ตัดสีออกทั้งหมด</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ ผลการตรวจ ═══════════════ -->
+  <section>
+    <h2>7. หน้าผลการตรวจ</h2>
+    <p class="note">
+      ตัวเลขทุกตัวมีบริบทกำกับเสมอ — <code>7</code> ไม่มีความหมาย แต่
+      <code>7 / 10 (ถ่วงน้ำหนัก 20%)</code> มีความหมาย
+      และทุกคะแนนต้องมีเหตุผลอยู่ข้างใต้ ห้ามตัดทิ้งเพื่อประหยัดพื้นที่
+    </p>
+
+    <div class="rl-card" style="margin-bottom: var(--rl-space-4)">
+      <div class="row" style="justify-content: space-between; align-items: flex-start">
+        <div>
+          <p class="rl-card__desc" style="margin: 0 0 var(--rl-space-1)">คะแนนรวมถ่วงน้ำหนัก</p>
+          <div class="rl-score rl-num">
+            <span class="rl-score__value">76</span>
+            <span class="rl-score__total">/ 100</span>
+            <span class="rl-sr-only">76 คะแนน จากคะแนนเต็ม 100</span>
+          </div>
+        </div>
+        <div class="row">
+          <button class="rl-btn rl-btn--secondary rl-btn--sm">คัดลอกผล</button>
+          <button class="rl-btn rl-btn--primary rl-btn--sm">ดาวน์โหลด PDF</button>
+        </div>
+      </div>
+      <div class="rl-progress" style="margin-top: var(--rl-space-4)" role="img" aria-label="คะแนนรวม 76 จาก 100">
+        <div class="rl-progress__fill" style="width: 76%"></div>
+      </div>
+      <p class="rl-hint" style="margin-top: var(--rl-space-3)">
+        คะแนนนี้เป็นข้อเสนอแนะจาก AI ตามเกณฑ์ที่คุณกำหนด ไม่ใช่คำตัดสิน — ผู้ตรวจที่เป็นคนควรพิจารณาอีกครั้ง
+      </p>
+    </div>
+
+    <div class="stack">
+      <article class="rl-criterion rl-criterion--met">
+        <div class="rl-criterion__bar"></div>
+        <div>
+          <p class="rl-criterion__name">1. ความชัดเจนของวัตถุประสงค์</p>
+          <p class="rl-criterion__reason">พบวัตถุประสงค์ระบุไว้ชัดเจนในหน้า 2 ย่อหน้าแรก และสอดคล้องกับข้อสรุปในหน้า 14</p>
+          <div style="margin-top: var(--rl-space-2)">
+            <span class="rl-badge rl-badge--met">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>
+              ครบตามเกณฑ์
+            </span>
+          </div>
+        </div>
+        <p class="rl-criterion__score rl-num">10<span class="rl-criterion__unit"> / 10 · น้ำหนัก 25%</span></p>
+      </article>
+
+      <article class="rl-criterion rl-criterion--partial">
+        <div class="rl-criterion__bar"></div>
+        <div>
+          <p class="rl-criterion__name">2. การอ้างอิงแหล่งข้อมูล</p>
+          <p class="rl-criterion__reason">มีรายการอ้างอิง 8 รายการ แต่ 3 รายการไม่ระบุปีที่เผยแพร่ และไม่พบการอ้างอิงในเนื้อหาสำหรับรายการที่ 5–8</p>
+          <div style="margin-top: var(--rl-space-2)">
+            <span class="rl-badge rl-badge--partial">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20z" fill="currentColor"/></svg>
+              มีบางส่วน
+            </span>
+          </div>
+        </div>
+        <p class="rl-criterion__score rl-num">6<span class="rl-criterion__unit"> / 10 · น้ำหนัก 30%</span></p>
+      </article>
+
+      <article class="rl-criterion rl-criterion--missing">
+        <div class="rl-criterion__bar"></div>
+        <div>
+          <p class="rl-criterion__name">3. ข้อจำกัดของการศึกษา</p>
+          <p class="rl-criterion__reason">ไม่พบหัวข้อหรือย่อหน้าที่กล่าวถึงข้อจำกัด ลองเพิ่มหลังส่วนอภิปรายผล</p>
+          <div style="margin-top: var(--rl-space-2)">
+            <span class="rl-badge rl-badge--missing">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/></svg>
+              ยังไม่พบ
+            </span>
+          </div>
+        </div>
+        <p class="rl-criterion__score rl-num">0<span class="rl-criterion__unit"> / 10 · น้ำหนัก 20%</span></p>
+      </article>
+
+      <article class="rl-criterion rl-criterion--unsure">
+        <div class="rl-criterion__bar"></div>
+        <div>
+          <p class="rl-criterion__name">4. คุณภาพของภาพประกอบและตาราง</p>
+          <p class="rl-criterion__reason">เอกสารมีภาพ 4 ภาพที่ระบบอ่านเนื้อหาข้างในไม่ได้ ประเมินจากคำบรรยายใต้ภาพเท่านั้น แนะนำให้คนตรวจซ้ำ</p>
+          <div style="margin-top: var(--rl-space-2)">
+            <span class="rl-badge rl-badge--unsure">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.2 2.4c-.5.2-.7.6-.7 1.1v.5M12 16.5v.01"/></svg>
+              ต้องให้คนตรวจ
+            </span>
+          </div>
+        </div>
+        <p class="rl-criterion__score rl-num">—<span class="rl-criterion__unit"> / 10 · น้ำหนัก 25%</span></p>
+      </article>
+    </div>
+  </section>
+
+  <!-- ═══════════════ สถานะโหลด ═══════════════ -->
+  <section>
+    <h2>8. ตอนกำลังรอ</h2>
+    <p class="note">
+      หลักการ: <b>ความช้าไม่ใช่ความผิด แต่ความเงียบใช่</b>
+      AI ใช้เวลาตรวจนานได้ แต่หน้าจอห้ามเงียบ ต้องบอกครบ 4 อย่าง:
+      กำลังทำอะไร · ถึงขั้นไหนแล้ว · อีกนานเท่าไหร่ · <b>และต้องยกเลิกได้เสมอ</b>
+    </p>
+    <div class="grid2">
+      <div class="rl-card">
+        <!-- ตัวอย่างการใช้หุ่นอย่างถูกที่: ตอนรอ ความเป็นมิตรช่วยลดความอึดอัด -->
+        <div style="display:flex; align-items:center; gap: var(--rl-space-3); margin-bottom: var(--rl-space-3)">
+          <img src="./logo/mascot-thinking.svg" alt="" height="64">
+          <p class="rl-loading" style="margin:0">
+            <span class="rl-spinner"></span>
+            กำลังตรวจเอกสาร
+          </p>
+        </div>
+        <p class="rl-card__desc">เอกสารยาวอาจใช้เวลาถึง 2 นาที ปิดหน้านี้แล้วผลจะหาย</p>
+        <div class="rl-progress" style="margin-bottom: var(--rl-space-4)">
+          <div class="rl-progress__fill" style="width: 60%"></div>
+        </div>
+        <ol class="rl-steps" style="margin-bottom: var(--rl-space-4)">
+          <li class="rl-step rl-step--done">✓ อ่านข้อความจากไฟล์</li>
+          <li class="rl-step rl-step--done">✓ ตรวจความครบถ้วนของเกณฑ์</li>
+          <li class="rl-step rl-step--current"><span class="rl-spinner" style="width:.9rem;height:.9rem"></span> ให้คะแนนรายข้อ (ข้อ 3 จาก 5)</li>
+          <li class="rl-step rl-step--todo">○ รวบรวมข้อเสนอแนะ</li>
+          <li class="rl-step rl-step--todo">○ คำนวณคะแนนถ่วงน้ำหนัก</li>
+        </ol>
+        <button class="rl-btn rl-btn--secondary rl-btn--sm">ยกเลิกการตรวจ</button>
+      </div>
+
+      <div class="rl-card">
+        <p class="rl-card__desc" style="margin-top:0">โครงร่างระหว่างรอข้อมูล — ใช้แทนที่ว่างเปล่า เพื่อให้ผู้ใช้เห็นว่าเนื้อหาจะมาตรงไหน และหน้าจอไม่กระโดดตอนข้อมูลมาถึง</p>
+        <div class="stack">
+          <div class="rl-skeleton" style="height: 1.5rem; width: 55%"></div>
+          <div class="rl-skeleton" style="height: 1rem;"></div>
+          <div class="rl-skeleton" style="height: 1rem; width: 85%"></div>
+          <div class="rl-skeleton" style="height: 1rem; width: 40%"></div>
+          <div class="rl-skeleton" style="height: 3rem; margin-top: var(--rl-space-2)"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ กล่องแจ้งเตือน ═══════════════ -->
+  <section>
+    <h2>9. กล่องแจ้งเตือน</h2>
+    <p class="note">
+      ทุกกล่องต้องมี <b>"แล้วทำยังไงต่อ"</b> เสมอ
+      กล่องที่บอกแค่ว่าพัง แต่ไม่บอกทางออก ถือว่ายังทำไม่เสร็จ
+    </p>
+    <div class="stack">
+      <div class="rl-alert rl-alert--info">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-5M12 8v.01"/></svg>
+        <div>
+          <p class="rl-alert__title">เอกสารของคุณไม่ถูกเก็บไว้</p>
+          <p class="rl-alert__body">ระบบตรวจแล้วลบทิ้งทันที ไม่มีฐานข้อมูล ถ้าปิดหน้านี้ผลจะหายไปด้วย — กด "ดาวน์โหลด PDF" ก่อนปิดถ้าต้องการเก็บไว้</p>
+        </div>
+      </div>
+
+      <div class="rl-alert rl-alert--warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17v.01"/></svg>
+        <div>
+          <p class="rl-alert__title">อ่านได้ 12 หน้า จากทั้งหมด 20 หน้า</p>
+          <p class="rl-alert__body">อีก 8 หน้าเป็นภาพสแกนที่ระบบอ่านตัวหนังสือไม่ได้ คะแนนที่ได้จึงคิดจาก 12 หน้าแรกเท่านั้น — ถ้าอยากให้ครบ ลองคัดลอกข้อความจาก 8 หน้านั้นมาวางในช่องข้อความแทน</p>
+        </div>
+      </div>
+
+      <div class="rl-alert rl-alert--danger">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg>
+        <div>
+          <p class="rl-alert__title">เชื่อมต่อกับเซิร์ฟเวอร์ไม่ได้</p>
+          <p class="rl-alert__body">เอกสารของคุณยังอยู่ในหน้าจอนี้ ไม่ได้หายไปไหน — ลองกด "ส่งตรวจอีกครั้ง" ใน 1 นาที ถ้ายังไม่ได้ อาจเป็นที่อินเทอร์เน็ตของคุณ</p>
+          <button class="rl-btn rl-btn--secondary rl-btn--sm" style="margin-top: var(--rl-space-3)">ส่งตรวจอีกครั้ง</button>
+        </div>
+      </div>
+
+      <div class="rl-alert rl-alert--success">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/></svg>
+        <div>
+          <p class="rl-alert__title">ตรวจเสร็จแล้ว — 5 เกณฑ์</p>
+          <p class="rl-alert__body">เลื่อนลงเพื่อดูคะแนนรายข้อพร้อมเหตุผล</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ เช็กลิสต์ ═══════════════ -->
+  <section>
+    <h2>10. เช็กลิสต์ก่อนปล่อยหน้าจอใหม่</h2>
+    <table>
+      <thead><tr><th style="width: 42%">ข้อ</th><th>ทำไม</th></tr></thead>
+      <tbody>
+        <tr><td>สีมาจาก token ทั้งหมด</td><td>เปลี่ยนสีแบรนด์ทีเดียวได้ทั้งเว็บ ไม่ต้องไล่แก้ทีละไฟล์</td></tr>
+        <tr><td>ทุกสถานะมีไอคอน + ข้อความ</td><td>คนตาบอดสี 1 ใน 12 ของผู้ชาย แยกเขียว-แดงไม่ออก</td></tr>
+        <tr><td>ตัวอักษรตัดกับพื้นอย่างน้อย 4.5:1</td><td>อ่านออกในที่แสงจ้าและบนจอคุณภาพต่ำ</td></tr>
+        <tr><td>กด Tab ไปได้ครบ และเห็นว่าอยู่ตรงไหน</td><td>คนที่ใช้เมาส์ไม่ได้ต้องใช้เว็บได้</td></tr>
+        <tr><td>ทุกอย่างที่กดได้ใหญ่ ≥ 44×44 px</td><td>ขนาดที่นิ้วโป้งผู้ใหญ่กดไม่พลาดบนมือถือ</td></tr>
+        <tr><td>ระหว่างรอมีความคืบหน้า + ปุ่มยกเลิก</td><td>ผู้ใช้ต้องรู้เสมอว่าระบบยังทำงานอยู่ และต้องออกได้</td></tr>
+        <tr><td>ข้อความ error บอกวิธีแก้ต่อ</td><td>บอกว่าพังเฉยๆ ทำให้ผู้ใช้ติดตัน</td></tr>
+        <tr><td>ย่อจอเหลือกว้าง 320px แล้วยังใช้ได้</td><td>มือถือรุ่นเล็กยังมีคนใช้อยู่</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+
+<script>
+  /* ---------- สลับโหมดมืด ---------- */
+  const toggle = document.getElementById('themeToggle');
+  const label  = document.getElementById('themeLabel');
+  toggle.addEventListener('click', () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    document.body.classList.toggle('dark', dark);
+    label.textContent = dark ? 'โหมดสว่าง' : 'โหมดมืด';
+  });
+
+  /* ---------- ทดสอบตัดสีออก เพื่อพิสูจน์ว่าไม่ได้พึ่งสีอย่างเดียว ---------- */
+  const grayBtn = document.getElementById('grayToggle');
+  const badgeRow = document.getElementById('badgeRow');
+  grayBtn.addEventListener('click', () => {
+    const on = badgeRow.style.filter === '';
+    badgeRow.style.filter = on ? 'grayscale(1)' : '';
+    grayBtn.textContent = on ? 'เอาสีกลับคืน' : 'ทดสอบ: ตัดสีออกทั้งหมด';
+  });
+  badgeRow.style.filter = '';
+
+  /* ---------- สร้างแผงสีอัตโนมัติจาก token จริง ---------- */
+  function buildSwatches(targetId, items) {
+    const box = document.getElementById(targetId);
+    box.innerHTML = items.map(([token, name, use]) => `
+      <div class="sw">
+        <div class="sw__chip" style="background: var(${token})"></div>
+        <div class="sw__meta"><b>${name}</b><span>${use}</span></div>
+      </div>`).join('');
+  }
+
+  buildSwatches('brandScale', [
+    ['--rl-brand-50',  'brand-50',  'พื้นหลังอ่อน'],
+    ['--rl-brand-200', 'brand-200', 'เส้นขอบเน้น'],
+    ['--rl-brand-400', 'brand-400', 'สีหลักโหมดมืด'],
+    ['--rl-brand-600', 'brand-600', '★ สีแบรนด์ · ปุ่มหลัก'],
+    ['--rl-brand-800', 'brand-800', 'ตัวอักษรบนพื้นอ่อน'],
+    ['--rl-accent-600','accent-600','แถบคะแนน'],
+    ['--rl-gray-600',  'gray-600',  'คำอธิบายประกอบ'],
+    ['--rl-gray-900',  'gray-900',  'ตัวอักษรหลัก'],
+  ]);
+
+  buildSwatches('stateScale', [
+    ['--rl-met-solid',     'ครบตามเกณฑ์', 'เขียวหม่น'],
+    ['--rl-partial-solid', 'มีบางส่วน',    'เหลืองอำพันหม่น'],
+    ['--rl-missing-solid', 'ยังไม่พบ',     'ส้มอิฐ — ไม่ใช่แดง'],
+    ['--rl-unsure-solid',  'ต้องให้คนตรวจ','เทา'],
+    ['--rl-danger-solid',  'ระบบผิดพลาด',  'แดง — ใช้ที่นี่ที่เดียว'],
+  ]);
+</script>
+</body>
+</html>

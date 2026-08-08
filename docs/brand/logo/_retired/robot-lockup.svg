@@ -1,0 +1,35 @@
+<!--
+  RubricLensAi — โลโก้เต็ม (หุ่นยนต์ + ชื่อแบรนด์)
+  ใช้ในหัวเว็บ เอกสาร และที่ที่มีพื้นที่แนวนอนพอ
+
+  ⚠️ ตัวอักษรยังเป็น <text> ไม่ใช่เส้นวาด — ยืมฟอนต์จากเครื่องที่เปิดไฟล์
+     ใช้บนเว็บเราเองได้ปกติ (เว็บโหลด Geist ไว้แล้ว)
+     แต่ถ้าส่งโรงพิมพ์หรือให้คนอื่นใช้ ต้องแปลงตัวอักษรเป็นเส้นก่อน
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="12 2 310 80" width="310" height="80" fill="none" role="img" aria-label="RubricLensAi">
+  <title>RubricLensAi</title>
+
+  <g stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.6">
+    <path d="M27.5 56 L17 64" stroke-width="4.6"/>
+    <path d="M56 57 L73.5 42.5" stroke-width="4.6"/>
+    <path d="M42 46 C33 46 26.5 52.5 25.5 65 C25 72.5 28.5 78 35 78 H49 C55.5 78 59 72.5 58.5 65 C57.5 52.5 51 46 42 46 Z"/>
+    <path d="M42 41.5 V46"/>
+    <rect x="20" y="6" width="44" height="35.5" rx="11"/>
+    <circle cx="83" cy="32" r="9.5"/>
+    <path d="M78.7 28.2 H88"   stroke-width="2.2"/>
+    <path d="M78.7 32   H83.5" stroke-width="2.2"/>
+    <path d="M78.7 35.8 H86"   stroke-width="2.2"/>
+  </g>
+  <circle cx="33" cy="24" r="4.2" fill="currentColor"/>
+  <circle cx="51" cy="24" r="4.2" fill="currentColor"/>
+
+  <!-- ชื่อแบรนด์: "RubricLens" หนา = ชื่อจริง / "Ai" บางและจาง = ส่วนขยาย
+       (แบรนด์นี้ไม่ได้ขายความเป็น AI แต่ขายความน่าเชื่อถือของการตรวจ) -->
+  <text x="106" y="53"
+        font-family="'Geist Variable', 'Geist', system-ui, sans-serif"
+        font-size="30"
+        letter-spacing="-0.6"
+        fill="currentColor">
+    <tspan font-weight="700">RubricLens</tspan><tspan font-weight="500" opacity="0.62">Ai</tspan>
+  </text>
+</svg>

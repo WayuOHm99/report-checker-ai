@@ -1,0 +1,485 @@
+/* ============================================================
+   RubricLensAi — ชิ้นส่วน UI มาตรฐาน
+   ============================================================
+
+   ไฟล์นี้คือ "หน้าตาที่ตกลงกันแล้ว" ของแต่ละชิ้นส่วน
+   ทุกค่าดึงมาจาก tokens.css — ห้ามเขียนสีหรือระยะห่างตรงๆ ในไฟล์นี้
+
+   ⚠️ ไฟล์นี้เป็นของเฟส 1 (ร่างระบบ) ยังไม่ได้เอาไปใช้ในเว็บจริง
+      เว็บจริงใช้ shadcn/Tailwind อยู่ การแปลงเป็น Tailwind class
+      เป็นงานเฟส 2 ที่รออนุมัติ
+
+   ไฟล์นี้มีไว้ 2 อย่าง:
+   1. ให้เห็นด้วยตาว่าตกลงกันว่าหน้าตาแบบไหน (เปิด preview.html)
+   2. เป็นต้นฉบับอ้างอิงตอนแปลงเข้า Tailwind
+   ============================================================ */
+
+@import url('./tokens.css');
+
+/* ============================================================
+   พื้นฐาน
+   ============================================================ */
+
+.rl {
+  font-family: var(--rl-font-sans);
+  font-size: var(--rl-text-base);
+  line-height: var(--rl-leading-body);
+  color: var(--rl-text);
+  background: var(--rl-bg);
+}
+
+/* ตัวเลขทุกตัวในระบบต้องกว้างเท่ากัน
+   ไม่งั้นคะแนน 11 กับ 88 จะกว้างไม่เท่ากัน ตารางจะเต้นตอนอัปเดต */
+.rl-num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ============================================================
+   วงแหวนตอนกด Tab (Focus ring)
+   ------------------------------------------------------------
+   สำคัญมากและมักถูกลืม: คนที่ใช้เมาส์ไม่ได้ต้องกด Tab ไล่ทีละปุ่ม
+   ถ้าไม่มีวงแหวนบอกตำแหน่ง เขาจะไม่รู้เลยว่าตอนนี้อยู่ตรงไหน
+
+   ใช้ :focus-visible ไม่ใช่ :focus
+   ต่างกันตรง: :focus-visible จะโชว์เฉพาะตอนกด Tab
+   ไม่โชว์ตอนคลิกเมาส์ (ซึ่งคนคลิกรู้อยู่แล้วว่ากดอะไร)
+   ============================================================ */
+
+.rl :focus-visible {
+  outline: 2px solid var(--rl-focus);
+  outline-offset: 2px;
+  border-radius: var(--rl-radius-sm);
+}
+
+/* ============================================================
+   ปุ่ม
+   ------------------------------------------------------------
+   กฎ: หนึ่งหน้าจอมีปุ่มหลัก (rl-btn--primary) ได้ "หนึ่งปุ่ม"
+   ถ้ามีสองปุ่มที่เด่นเท่ากัน ผู้ใช้จะลังเลว่าควรกดอันไหน
+   ============================================================ */
+
+.rl-btn {
+  /* ใช้ inline-flex เพื่อให้ไอคอนกับข้อความอยู่กึ่งกลางแนวตั้งตรงกันเสมอ */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--rl-space-2);
+
+  min-height: var(--rl-tap-min);   /* 44px — ขนาดที่นิ้วกดไม่พลาด */
+  padding: 0 var(--rl-space-4);
+
+  font-family: inherit;
+  font-size: var(--rl-text-base);
+  font-weight: var(--rl-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+
+  border: 1px solid transparent;
+  border-radius: var(--rl-radius-md);
+  cursor: pointer;
+
+  transition:
+    background-color var(--rl-motion-fast) var(--rl-ease),
+    border-color     var(--rl-motion-fast) var(--rl-ease),
+    color            var(--rl-motion-fast) var(--rl-ease);
+}
+
+.rl-btn svg { width: 1.125em; height: 1.125em; flex-shrink: 0; }
+
+/* ปุ่มที่กดไม่ได้: จางลง + เปลี่ยนเคอร์เซอร์
+   ห้ามซ่อนปุ่มแทนการปิดใช้งาน — ผู้ใช้จะงงว่าปุ่มหายไปไหน */
+.rl-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* --- ปุ่มหลัก: การกระทำสำคัญที่สุดของหน้านั้น --- */
+.rl-btn--primary {
+  background: var(--rl-primary);
+  color: var(--rl-text-onbrand);
+}
+.rl-btn--primary:hover:not(:disabled)  { background: var(--rl-primary-hover); }
+.rl-btn--primary:active:not(:disabled) { background: var(--rl-primary-active); }
+
+/* --- ปุ่มรอง: ทางเลือกที่ยังสำคัญ เช่น "ดูตัวอย่างก่อน" --- */
+.rl-btn--secondary {
+  background: var(--rl-bg-raised);
+  color: var(--rl-text);
+  border-color: var(--rl-border-strong);
+}
+.rl-btn--secondary:hover:not(:disabled) {
+  background: var(--rl-bg-subtle);
+  border-color: var(--rl-primary);
+  color: var(--rl-primary);
+}
+
+/* --- ปุ่มจาง: การกระทำรอง เช่น "ยกเลิก" "ล้างค่า" --- */
+.rl-btn--ghost {
+  background: transparent;
+  color: var(--rl-text-muted);
+}
+.rl-btn--ghost:hover:not(:disabled) {
+  background: var(--rl-bg-subtle);
+  color: var(--rl-text);
+}
+
+/* --- ปุ่มอันตราย: ลบข้อมูล ทำแล้วกู้ไม่ได้ ---
+   ใช้แดงที่นี่ได้ เพราะเป็นการกระทำที่ย้อนไม่ได้จริงๆ
+   (ต่างจากคะแนนต่ำ ซึ่งห้ามใช้แดง) */
+.rl-btn--danger {
+  background: var(--rl-danger-solid);
+  color: var(--rl-gray-0);
+}
+.rl-btn--danger:hover:not(:disabled) { filter: brightness(0.92); }
+
+/* --- ขนาด --- */
+.rl-btn--sm {
+  min-height: 2.25rem;         /* 36px — ใช้ได้เฉพาะบนเดสก์ท็อป */
+  padding: 0 var(--rl-space-3);
+  font-size: var(--rl-text-sm);
+}
+.rl-btn--lg {
+  min-height: 3.25rem;         /* 52px — ปุ่มเรียกร้องความสนใจ */
+  padding: 0 var(--rl-space-5);
+  font-size: var(--rl-text-lg);
+}
+
+/* ปุ่มเต็มความกว้าง — ใช้บนมือถือ */
+.rl-btn--block { width: 100%; }
+
+/* ============================================================
+   ช่องกรอกข้อมูล
+   ============================================================ */
+
+.rl-field { display: flex; flex-direction: column; gap: var(--rl-space-2); }
+
+.rl-label {
+  font-size: var(--rl-text-sm);
+  font-weight: var(--rl-weight-medium);
+  color: var(--rl-text);
+}
+
+/* คำอธิบายใต้ป้ายกำกับ — บอกล่วงหน้าว่าต้องกรอกยังไง
+   ดีกว่าปล่อยให้กรอกผิดแล้วค่อยขึ้น error */
+.rl-hint {
+  font-size: var(--rl-text-sm);
+  color: var(--rl-text-muted);
+}
+
+.rl-input,
+.rl-textarea {
+  font-family: inherit;
+  font-size: var(--rl-text-base);
+  line-height: var(--rl-leading-body);
+  color: var(--rl-text);
+
+  background: var(--rl-bg-raised);
+  border: 1px solid var(--rl-border-strong);
+  border-radius: var(--rl-radius-md);
+  padding: var(--rl-space-3);
+
+  transition: border-color var(--rl-motion-fast) var(--rl-ease);
+}
+.rl-input { min-height: var(--rl-tap-min); }
+.rl-textarea { min-height: 8rem; resize: vertical; }
+
+.rl-input:hover, .rl-textarea:hover { border-color: var(--rl-gray-400); }
+
+.rl-input::placeholder,
+.rl-textarea::placeholder { color: var(--rl-text-faint); }
+
+/* ช่องที่กรอกผิด: ขอบแดง + ต้องมีข้อความบอกด้วยเสมอ (หลักการข้อ 1) */
+.rl-input--error, .rl-textarea--error { border-color: var(--rl-danger-solid); }
+
+.rl-error-text {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--rl-space-2);
+  font-size: var(--rl-text-sm);
+  color: var(--rl-danger-fg);
+}
+
+/* ============================================================
+   การ์ด
+   ============================================================ */
+
+.rl-card {
+  background: var(--rl-bg-raised);
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius-lg);
+  padding: var(--rl-space-5);
+  box-shadow: var(--rl-shadow-sm);
+}
+
+.rl-card__title {
+  font-size: var(--rl-text-xl);
+  font-weight: var(--rl-weight-bold);
+  line-height: var(--rl-leading-tight);
+  margin: 0 0 var(--rl-space-2);
+}
+
+.rl-card__desc {
+  font-size: var(--rl-text-sm);
+  color: var(--rl-text-muted);
+  margin: 0 0 var(--rl-space-4);
+}
+
+/* ============================================================
+   ป้ายบอกระดับคะแนน
+   ------------------------------------------------------------
+   ★ หัวใจของแบรนด์นี้อยู่ตรงนี้ ★
+
+   ทุกป้ายมี 3 อย่างเสมอ: สี + ไอคอน + ข้อความ
+   ถ้าตัดอย่างใดอย่างหนึ่งออก = ผิดหลักการข้อ 1
+   (คนตาบอดสีจะอ่านไม่ออกถ้าเหลือแต่สี)
+   ============================================================ */
+
+.rl-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  padding: var(--rl-space-1) var(--rl-space-3);
+
+  font-size: var(--rl-text-sm);
+  font-weight: var(--rl-weight-medium);
+  line-height: var(--rl-leading-tight);
+
+  border: 1px solid;
+  border-radius: var(--rl-radius-full);
+  white-space: nowrap;
+}
+
+.rl-badge svg { width: 1em; height: 1em; flex-shrink: 0; }
+
+.rl-badge--met {
+  background: var(--rl-met-bg);
+  border-color: var(--rl-met-border);
+  color: var(--rl-met-fg);
+}
+.rl-badge--partial {
+  background: var(--rl-partial-bg);
+  border-color: var(--rl-partial-border);
+  color: var(--rl-partial-fg);
+}
+.rl-badge--missing {
+  background: var(--rl-missing-bg);
+  border-color: var(--rl-missing-border);
+  color: var(--rl-missing-fg);
+}
+.rl-badge--unsure {
+  background: var(--rl-unsure-bg);
+  border-color: var(--rl-unsure-border);
+  color: var(--rl-unsure-fg);
+}
+
+/* ============================================================
+   แถวผลการตรวจรายข้อ
+   ------------------------------------------------------------
+   แถบสีด้านซ้ายช่วยให้กวาดตาหาข้อที่ยังขาดได้เร็ว
+   แต่แถบสีเป็นตัวช่วย ไม่ใช่ตัวหลัก — ป้ายกับข้อความคือตัวหลัก
+   ============================================================ */
+
+.rl-criterion {
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  gap: var(--rl-space-4);
+  align-items: start;
+
+  background: var(--rl-bg-raised);
+  border: 1px solid var(--rl-border);
+  border-radius: var(--rl-radius-md);
+  padding: var(--rl-space-4);
+  padding-left: 0;
+  overflow: hidden;
+}
+
+.rl-criterion__bar { align-self: stretch; border-radius: 0; }
+.rl-criterion--met     .rl-criterion__bar { background: var(--rl-met-solid); }
+.rl-criterion--partial .rl-criterion__bar { background: var(--rl-partial-solid); }
+.rl-criterion--missing .rl-criterion__bar { background: var(--rl-missing-solid); }
+.rl-criterion--unsure  .rl-criterion__bar { background: var(--rl-unsure-solid); }
+
+.rl-criterion__name {
+  font-weight: var(--rl-weight-medium);
+  margin: 0 0 var(--rl-space-1);
+}
+
+/* เหตุผลประกอบคะแนน — ห้ามตัดทิ้งเพื่อประหยัดพื้นที่
+   คะแนนที่ไม่มีเหตุผลคือสิ่งที่แบรนด์นี้ต่อต้าน */
+.rl-criterion__reason {
+  font-size: var(--rl-text-sm);
+  color: var(--rl-text-muted);
+  margin: 0;
+}
+
+.rl-criterion__score {
+  font-size: var(--rl-text-lg);
+  font-weight: var(--rl-weight-bold);
+  white-space: nowrap;
+  padding-right: var(--rl-space-4);
+}
+
+/* หน่วยและน้ำหนักถ่วง เขียนจางกว่าตัวเลข
+   ตัวเลขคือพระเอก แต่หน่วยต้องมี ไม่งั้นเลขลอย (หลักการข้อ 2) */
+.rl-criterion__unit {
+  font-size: var(--rl-text-sm);
+  font-weight: var(--rl-weight-normal);
+  color: var(--rl-text-faint);
+}
+
+/* ============================================================
+   คะแนนรวม
+   ============================================================ */
+
+.rl-score {
+  display: flex;
+  align-items: baseline;
+  gap: var(--rl-space-2);
+}
+.rl-score__value {
+  font-size: var(--rl-text-score);
+  font-weight: var(--rl-weight-bold);
+  line-height: 1;
+  color: var(--rl-primary);
+}
+.rl-score__total {
+  font-size: var(--rl-text-xl);
+  color: var(--rl-text-muted);
+}
+
+/* ============================================================
+   แถบความคืบหน้า
+   ============================================================ */
+
+.rl-progress {
+  height: 0.5rem;
+  background: var(--rl-gray-200);
+  border-radius: var(--rl-radius-full);
+  overflow: hidden;
+}
+.dark .rl-progress { background: var(--rl-gray-800); }
+
+.rl-progress__fill {
+  height: 100%;
+  background: var(--rl-accent-600);
+  border-radius: var(--rl-radius-full);
+  transition: width var(--rl-motion-slow) var(--rl-ease);
+}
+
+/* ============================================================
+   สถานะกำลังโหลด
+   ------------------------------------------------------------
+   หลักการข้อ 3: ความช้าไม่ใช่ความผิด แต่ความเงียบใช่
+
+   ทุกบล็อกโหลดต้องมีครบ 4 อย่าง:
+   1. บอกว่ากำลังทำอะไร (ไม่ใช่ "กรุณารอ")
+   2. บอกว่าถึงขั้นไหนแล้ว
+   3. บอกเวลาโดยประมาณ
+   4. มีปุ่มยกเลิก
+   ============================================================ */
+
+.rl-spinner {
+  width: 1.125rem;
+  height: 1.125rem;
+  flex-shrink: 0;
+  border: 2px solid var(--rl-gray-300);
+  border-top-color: var(--rl-primary);
+  border-radius: var(--rl-radius-full);
+  animation: rl-spin 700ms linear infinite;
+}
+@keyframes rl-spin { to { transform: rotate(360deg); } }
+
+/* คนที่ตั้งค่าเครื่องว่า "ลดการเคลื่อนไหว" จะเวียนหัวกับของหมุน
+   เปลี่ยนเป็นกะพริบจางๆ แทน ยังบอกได้ว่าระบบกำลังทำงาน */
+@media (prefers-reduced-motion: reduce) {
+  .rl-spinner {
+    animation: rl-pulse 1.4s ease-in-out infinite;
+    border-top-color: var(--rl-primary);
+  }
+  @keyframes rl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+}
+
+.rl-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-3);
+  color: var(--rl-primary);
+  font-size: var(--rl-text-sm);
+  font-weight: var(--rl-weight-medium);
+}
+
+/* รายการขั้นตอน — ให้ผู้ใช้เห็นว่าเหลืออีกกี่ขั้น */
+.rl-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--rl-space-2); }
+
+.rl-step {
+  display: flex;
+  align-items: center;
+  gap: var(--rl-space-2);
+  font-size: var(--rl-text-sm);
+}
+.rl-step--done    { color: var(--rl-met-fg); }
+.rl-step--current { color: var(--rl-primary); font-weight: var(--rl-weight-medium); }
+.rl-step--todo    { color: var(--rl-text-faint); }
+
+/* โครงร่างเทาระหว่างรอข้อมูล (skeleton)
+   ใช้แทนที่ว่างเปล่า เพื่อให้ผู้ใช้เห็นว่าเนื้อหาจะมาตรงไหน
+   และหน้าจอไม่กระโดดตอนข้อมูลมาถึง */
+.rl-skeleton {
+  background: linear-gradient(90deg,
+    var(--rl-gray-100) 25%,
+    var(--rl-gray-200) 37%,
+    var(--rl-gray-100) 63%);
+  background-size: 400% 100%;
+  border-radius: var(--rl-radius-sm);
+  animation: rl-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes rl-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .rl-skeleton { animation: none; background: var(--rl-gray-150, var(--rl-gray-200)); }
+}
+
+/* ============================================================
+   กล่องแจ้งเตือน
+   ------------------------------------------------------------
+   ทุกกล่องต้องมี: ไอคอน + หัวข้อ + เนื้อหา + "แล้วทำยังไงต่อ"
+   กล่องที่บอกแค่ว่าพัง แต่ไม่บอกทางออก = ยังไม่เสร็จ
+   ============================================================ */
+
+.rl-alert {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--rl-space-3);
+  padding: var(--rl-space-4);
+  border: 1px solid;
+  border-radius: var(--rl-radius-md);
+  font-size: var(--rl-text-sm);
+}
+.rl-alert svg { width: 1.25rem; height: 1.25rem; margin-top: 0.15rem; }
+.rl-alert__title { font-weight: var(--rl-weight-medium); margin: 0 0 var(--rl-space-1); }
+.rl-alert__body  { margin: 0; opacity: 0.9; }
+
+.rl-alert--info    { background: var(--rl-primary-soft);  border-color: var(--rl-brand-200); color: var(--rl-brand-800); }
+.rl-alert--success { background: var(--rl-met-bg);        border-color: var(--rl-met-border); color: var(--rl-met-fg); }
+.rl-alert--warning { background: var(--rl-partial-bg);    border-color: var(--rl-partial-border); color: var(--rl-partial-fg); }
+.rl-alert--danger  { background: var(--rl-danger-bg);     border-color: var(--rl-danger-border); color: var(--rl-danger-fg); }
+
+.dark .rl-alert--info { color: var(--rl-brand-100); border-color: var(--rl-brand-700); }
+
+/* ============================================================
+   ตัวช่วยสำหรับโปรแกรมอ่านหน้าจอ
+   ------------------------------------------------------------
+   ข้อความที่คนตาดีไม่เห็น แต่โปรแกรมอ่านหน้าจอ (ของคนตาบอด) อ่านได้
+   ใช้กับตัวเลขที่ต้องการบริบทเพิ่ม เช่น "8 คะแนน จากเต็ม 10"
+   ============================================================ */
+
+.rl-sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

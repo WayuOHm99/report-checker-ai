@@ -1,0 +1,16 @@
+<!--
+  RubricLensAi — หัวหุ่น (ใช้เมื่อพื้นที่แคบ หรือขนาด 24-48 พิกเซล)
+
+  ย่อจากโลโก้เต็มโดยตัดตัวและแขนออก แต่ยังเก็บแนวคิด "เกณฑ์" ไว้
+  โดยย้ายเส้นเกณฑ์เข้ามาอยู่ในหน้าจอ ใต้ดวงตา (ยาวไม่เท่ากันเหมือนเดิม)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="17 3 50 42" width="50" height="42" fill="none" role="img" aria-label="RubricLensAi">
+  <title>RubricLensAi</title>
+  <rect x="20" y="6" width="44" height="35.5" rx="11" stroke="currentColor" stroke-width="3.6"/>
+  <circle cx="33" cy="19.5" r="4" fill="currentColor"/>
+  <circle cx="51" cy="19.5" r="4" fill="currentColor"/>
+  <g stroke="currentColor" stroke-width="2.6" stroke-linecap="round">
+    <path d="M30 29.5 H54"/>
+    <path d="M30 34.5 H44"/>
+  </g>
+</svg>

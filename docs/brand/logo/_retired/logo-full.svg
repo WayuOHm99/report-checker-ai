@@ -1,0 +1,45 @@
+<!--
+  RubricLensAi — โลโก้เต็ม (เครื่องหมาย + ชื่อ)
+  ใช้ในหัวเว็บ เอกสาร และที่ที่มีพื้นที่แนวนอนพอ
+  ถ้าพื้นที่แคบ (เช่น มือถือ) ให้ใช้ logo-mark.svg แทน
+
+  ⚠️ ข้อจำกัดที่ต้องรู้:
+  ตัวอักษรในไฟล์นี้เป็น <text> ไม่ใช่เส้นวาด (outline)
+  แปลว่ามันไปยืมฟอนต์จากเครื่องที่เปิดไฟล์
+  - เปิดในเว็บของเราเอง → ถูกต้อง เพราะเว็บโหลดฟอนต์ Geist ไว้แล้ว
+  - เปิดในเครื่องที่ไม่มี Geist → จะตกไปใช้ฟอนต์ระบบ หน้าตาจะเพี้ยนเล็กน้อย
+  - ส่งโรงพิมพ์ / ส่งให้คนอื่นใช้ → ต้องแปลงตัวอักษรเป็นเส้นก่อน
+    (เปิดใน Illustrator หรือ Inkscape แล้วสั่ง "แปลงข้อความเป็นเส้น")
+
+  ยังไม่ได้แปลงเป็นเส้นตอนนี้ เพราะการแปลงต้องใช้ไฟล์ฟอนต์จริง
+  ซึ่งเป็นงานที่ควรทำตอนเฟส 2 พร้อมกับสร้าง og.png
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 196 40"
+     width="196" height="40"
+     fill="none"
+     role="img"
+     aria-label="RubricLensAi">
+  <title>RubricLensAi</title>
+
+  <!-- เครื่องหมาย: ย่อจาก 32x32 เหลือ 30x30 แล้ววางชิดซ้าย กึ่งกลางแนวตั้ง -->
+  <g transform="translate(0, 5) scale(0.9375)">
+    <path d="M19.6 19.6 L27.2 27.2" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" />
+    <circle cx="13" cy="13" r="9" stroke="currentColor" stroke-width="2.5" />
+    <path d="M8.2 9.5  H17.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+    <path d="M8.2 13.0 H13.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+    <path d="M8.2 16.5 H16.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+  </g>
+
+  <!-- ชื่อแบรนด์
+       "RubricLens" หนา = ชื่อจริง
+       "Ai" บางกว่าและจางกว่า = ส่วนขยาย ไม่ใช่พระเอก
+       (แบรนด์นี้ไม่ได้ขาย AI ขายความน่าเชื่อถือของการตรวจ) -->
+  <text x="42" y="26.5"
+        font-family="'Geist Variable', 'Geist', system-ui, sans-serif"
+        font-size="21"
+        letter-spacing="-0.4"
+        fill="currentColor">
+    <tspan font-weight="700">RubricLens</tspan><tspan font-weight="500" opacity="0.62">Ai</tspan>
+  </text>
+</svg>

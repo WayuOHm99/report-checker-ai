@@ -1,0 +1,31 @@
+<!--
+  RubricLensAi — เครื่องหมายหลัก (mark)
+  แนวคิด: เลนส์ (วงกลม) + เกณฑ์ (เส้นยาวไม่เท่ากันข้างใน) + ด้ามจับ (เครื่องมือที่คนถือ)
+
+  ใช้ currentColor ทั้งหมด แปลว่ามันจะเปลี่ยนสีตามตัวอักษรรอบๆ อัตโนมัติ
+  ต้องการสีอื่น: ใส่ style="color: #xxx" ที่ตัว <svg> หรือที่กล่องครอบ
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 32 32"
+     width="32" height="32"
+     fill="none"
+     role="img"
+     aria-label="RubricLensAi">
+  <title>RubricLensAi</title>
+
+  <!-- ด้ามจับ: วาดก่อนวงกลม เพื่อให้วงกลมทับปลายด้ามให้ดูเรียบร้อย -->
+  <path d="M19.6 19.6 L27.2 27.2"
+        stroke="currentColor"
+        stroke-width="3.2"
+        stroke-linecap="round" />
+
+  <!-- เลนส์ -->
+  <circle cx="13" cy="13" r="9"
+          stroke="currentColor"
+          stroke-width="2.5" />
+
+  <!-- เกณฑ์ 3 ข้อ ยาวไม่เท่ากัน = คะแนนแต่ละข้อไม่เท่ากัน -->
+  <path d="M8.2 9.5  H17.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+  <path d="M8.2 13.0 H13.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+  <path d="M8.2 16.5 H16.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" />
+</svg>
